@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloud-native-processing-platform
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/MelvinjoseC/fastapi-k8s-helm-cicd.git' # The user's target repository
+    targetRevision: HEAD
+    path: k8s/overlays/dev # Deploys the Kustomize overlay containing KEDA config
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: processing-platform
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

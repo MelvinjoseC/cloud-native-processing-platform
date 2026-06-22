@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: producer-monitor
+  namespace: processing-platform
+  labels:
+    release: prometheus-stack  # Typically matches the label of the deployed Prometheus Operator release
+spec:
+  selector:
+    matchLabels:
+      app: producer
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

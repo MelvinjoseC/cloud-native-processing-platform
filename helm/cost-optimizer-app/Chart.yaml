@@ -1,0 +1,11 @@
+apiVersion: v2
+name: cost-optimizer-app
+description: Helm chart for Cloud-Native Cost-Optimized Processing Platform with KEDA scaling
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: MelvinjoseC
+    url: https://github.com/MelvinjoseC
+dependencies:
+  # RabbitMQ could be imported as a dependency, but packaging a local deployment is cleaner for a simple demo

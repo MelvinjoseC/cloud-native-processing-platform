@@ -1,0 +1,37 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-alerts
+  namespace: processing-platform
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: platform.rules
+      rules:
+        - alert: QueueBacklogHigh
+          expr: rabbitmq_queue_messages{queue="tasks"} > 100
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "RabbitMQ task queue backlog is high"
+            description: "The queue 'tasks' has more than 100 messages for over 2 minutes. Workers might be scaling too slowly or failing."
+
+        - alert: WorkerScaleLimitReached
+          expr: kube_deployment_status_replicas{deployment="worker"} == 10
+          for: 5m
+          labels:
+            severity: info
+          annotations:
+            summary: "Worker nodes running at maximum capacity"
+            description: "The background worker deployment has reached its max replica count of 10. Queue processing speed may degrade."
+
+        - alert: RedisCacheOffline
+          expr: http_requests_total{endpoint="/jobs", status="503"} > 5
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "FastAPI producer experiencing high 503 error rate"
+            description: "The Producer service is returning 503 codes, likely due to broker or database disconnection."

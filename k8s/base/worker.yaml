@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker-sa
+  namespace: processing-platform
+  # Production overlay can inject the IRSA role ARN annotation:
+  # annotations:
+  #   eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/cost-optimized-eks-worker-role"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: processing-platform
+  labels:
+    app: worker
+spec:
+  # Starts at 0 replicas. KEDA will scale it dynamically from 0 -> N -> 0!
+  replicas: 0
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      serviceAccountName: worker-sa
+      terminationGracePeriodSeconds: 60  # Allows active tasks to complete within 60s when scaling down
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: worker
+          image: ghcr.io/melvinjosec/cloud-native-processing-platform-worker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RABBITMQ_HOST
+              value: "rabbitmq"
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: rabbitmq-user
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: rabbitmq-pass
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_DB
+              value: "0"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - main.py
+            initialDelaySeconds: 10
+            periodSeconds: 15

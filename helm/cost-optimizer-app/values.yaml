@@ -1,0 +1,73 @@
+# Default values for cost-optimizer-app
+
+global:
+  namespace: processing-platform
+
+secrets:
+  rabbitmqUser: guest
+  rabbitmqPass: guest
+  redisPassword: strongpassword
+
+producer:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/melvinjosec/cloud-native-processing-platform-producer
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  service:
+    port: 80
+    targetPort: 8000
+
+worker:
+  image:
+    repository: ghcr.io/melvinjosec/cloud-native-processing-platform-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  # KEDA autoscaling properties
+  keda:
+    enabled: true
+    minReplicas: 0
+    maxReplicas: 10
+    cooldownPeriod: 30
+    queueLengthTriggerValue: 5
+  terminationGracePeriodSeconds: 60
+
+rabbitmq:
+  image: rabbitmq:3.12-management
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+redis:
+  image: redis:7.2-alpine
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+resilience:
+  pdb:
+    enabled: true
+  networkPolicy:
+    enabled: true

@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - keda-scaledobject.yaml
+
+images:
+  - name: ghcr.io/melvinjosec/cloud-native-processing-platform-producer
+    newName: ghcr.io/melvinjosec/cloud-native-processing-platform-producer
+    newTag: dev-latest
+  - name: ghcr.io/melvinjosec/cloud-native-processing-platform-worker
+    newName: ghcr.io/melvinjosec/cloud-native-processing-platform-worker
+    newTag: dev-latest

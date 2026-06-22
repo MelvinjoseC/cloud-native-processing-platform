@@ -1,0 +1,19 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: rabbitmq-worker-scaler
+  namespace: processing-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: worker
+  minReplicaCount: 0  # CRITICAL: Scales worker pods down to 0 when queue is empty, saving EKS node compute costs
+  maxReplicaCount: 10
+  cooldownPeriod: 30  # Wait 30 seconds before scaling down from 1 to 0 after queue is empty
+  triggers:
+    - type: rabbitmq
+      metadata:
+        queueName: tasks
+        value: "5"    # Scale up 1 replica for every 5 messages in the queue (e.g. 50 messages = 10 replicas)
+        host: amqp://guest:guest@rabbitmq.processing-platform.svc.cluster.local:5672//

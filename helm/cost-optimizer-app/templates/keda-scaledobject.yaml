@@ -1,0 +1,21 @@
+{{- if .Values.worker.keda.enabled -}}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: rabbitmq-worker-scaler
+  namespace: {{ .Values.global.namespace | default .Release.Namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: worker
+  minReplicaCount: {{ .Values.worker.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.keda.maxReplicas }}
+  cooldownPeriod: {{ .Values.worker.keda.cooldownPeriod }}
+  triggers:
+    - type: rabbitmq
+      metadata:
+        queueName: tasks
+        value: "{{ .Values.worker.keda.queueLengthTriggerValue }}"
+        host: amqp://{{ .Values.secrets.rabbitmqUser }}:{{ .Values.secrets.rabbitmqPass }}@rabbitmq.{{ .Values.global.namespace | default .Release.Namespace }}.svc.cluster.local:5672//
+{{- end }}

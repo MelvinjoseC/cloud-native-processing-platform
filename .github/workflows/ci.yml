@@ -1,0 +1,113 @@
+name: CI/CD Platform Validation Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-validate:
+    name: Lint Application & Validate IaC
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-model: '3.12'
+
+      - name: Python Linting
+        run: |
+          pip install flake8 black
+          flake8 app/ --max-line-length=120 --exclude=venv
+          black --check app/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Format & Validate
+        run: |
+          cd terraform
+          terraform fmt -check
+          terraform init -backend=false
+          terraform validate
+
+  build-and-scan:
+    name: Build & Security Scan Containers
+    runs-on: ubuntu-latest
+    needs: lint-and-validate
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Build Producer Image
+        run: docker build -t producer:ci-test ./app/producer
+
+      - name: Build Worker Image
+        run: docker build -t worker:ci-test ./app/worker
+
+      - name: Scan Producer Image (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'producer:ci-test'
+          format: 'table'
+          exit-code: '0' # Don't block build on dev vulnerabilities, but scan is run
+          severity: 'CRITICAL,HIGH'
+
+      - name: Scan Worker Image (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'worker:ci-test'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+
+  smoke-test-resilience:
+    name: Live Kubernetes Resilience Test (Chaos Injection)
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Create kind Cluster
+        uses: helm/kind-action@v1.4.0
+        with:
+          cluster_name: keda-smoke-test
+
+      - name: Build and Load Docker Images
+        run: |
+          docker build -t ghcr.io/melvinjosec/cloud-native-processing-platform-producer:dev-latest ./app/producer
+          docker build -t ghcr.io/melvinjosec/cloud-native-processing-platform-worker:dev-latest ./app/worker
+          kind load docker-image ghcr.io/melvinjosec/cloud-native-processing-platform-producer:dev-latest --name keda-smoke-test
+          kind load docker-image ghcr.io/melvinjosec/cloud-native-processing-platform-worker:dev-latest --name keda-smoke-test
+
+      - name: Install KEDA
+        run: |
+          helm repo add kedacore https://kedacore.github.io/charts
+          helm repo update
+          helm install keda kedacore/keda --namespace keda --create-namespace --wait
+
+      - name: Deploy Platform Stack via Kustomize
+        run: |
+          kubectl apply -k k8s/overlays/dev
+          
+          echo "Waiting for core services (RabbitMQ, Redis, Producer) to be ready..."
+          kubectl rollout status deployment/rabbitmq -n processing-platform --timeout=120s
+          kubectl rollout status deployment/redis -n processing-platform --timeout=120s
+          kubectl rollout status deployment/producer -n processing-platform --timeout=120s
+
+      - name: Port-Forward API
+        run: |
+          kubectl port-forward svc/producer 8080:80 -n processing-platform &
+          sleep 5
+
+      - name: Run Chaos & Resilience Test Suite
+        run: |
+          chmod +x chaos/test-resilience.sh
+          ./chaos/test-resilience.sh

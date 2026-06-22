@@ -1,0 +1,41 @@
+# Promtail configuration to scrap logs from the cost-optimized processing platform
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: kubernetes-pods-app
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace]
+        action: keep
+        regex: processing-platform
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: replace
+        target_label: app
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: pod
+      - source_labels: [__meta_kubernetes_container_name]
+        action: replace
+        target_label: container
+      - target_label: __path__
+        replacement: /var/log/pods/$1_$2_$3/*.log
+        separator: /
+        source_labels:
+          - __meta_kubernetes_pod_uid
+          - __meta_kubernetes_container_name
+    pipeline_stages:
+      # Parse worker logs matching pattern: "2026-06-22 12:00:00 [INFO] [job_id] Message details"
+      - regex:
+          expression: '^(?P<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) \[(?P<level>[A-Z]+)\] (?:\[(?P<job_id>[a-f0-9-]+)\] )?(?P<message>.*)$'
+      - labels:
+          level:
+          job_id:
