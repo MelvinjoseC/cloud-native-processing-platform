@@ -139,4 +139,17 @@ def readyz():
     except Exception as e:
         logger.error(f"Readyz check failed (RabbitMQ offline): {e}")
         raise HTTPException(status_code=503, detail="RabbitMQ not reachable")
+    
+    # Verify connectivity to Redis
+    if redis_client:
+        try:
+            redis_client.ping()
+        except Exception as e:
+            logger.error(f"Readyz check failed (Redis offline): {e}")
+            raise HTTPException(status_code=503, detail="Redis cache not reachable")
+    else:
+        logger.error("Readyz check failed: Redis client is not initialized")
+        raise HTTPException(status_code=503, detail="Redis client not initialized")
+        
     return {"status": "ready"}
+
