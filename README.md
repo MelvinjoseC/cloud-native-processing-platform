@@ -78,18 +78,50 @@ The background `worker` deployment is configured with `replicas: 0`.
 Rather than giving the EKS nodes wide AWS permissions, we configure an **OIDC provider** in [eks.tf](terraform/eks.tf). In [irsa.tf](terraform/irsa.tf), we create a specific IAM role with S3/SQS access policies that can only be assumed by the specific K8s ServiceAccount (`worker-sa`) in our namespace.
 
 ### 3. Graceful Shutdown & Zero Task Loss
-When EKS scales down or EC2 reclaims a Spot instance, pods receive a `SIGTERM` signal. The worker code in `main.py` intercepts this signal:
-*   It finishes processing its active task.
-*   It sends the AMQP acknowledgement (`ack`) back to RabbitMQ.
-*   It closes connections and exits cleanly.
-*   If the worker crashes abruptly, RabbitMQ automatically requeues the task so another worker picks it up—achieving **zero message loss**.
+When EKS scales down or EC2 reclaims a Spot instance, pods receive a `SIGTERM` signal. The worker code intercepts this signal:
+*   **Early Abort & Requeue**: If the worker is in the middle of processing a job, it aborts execution immediately, resets the job state in Redis to `PENDING`, rejects the task (`nack` with `requeue=True`) so another worker picks it up immediately, and exits. This ensures that long-running jobs are not lost or stuck in processing when Kubernetes terminates the container.
+*   **Automatic Requeue**: If the worker crashes abruptly, RabbitMQ automatically requeues the task so another worker picks it up—achieving **zero message loss**.
+
+### 4. Exponential Backoff & Jitter
+Worker connections to RabbitMQ implement an exponential backoff retry mechanism with random jitter. This prevents a thundering herd issue during startup spikes or service recovery, gracefully scaling reconnection attempts up to a maximum of 60 seconds.
 
 ---
 
 ## 🚀 Getting Started
 
-### Local Emulation Setup (Using `kind`)
-To test this enterprise architecture locally for free:
+### Local Orchestration (Using Docker Compose)
+If you prefer not to spin up a full Kubernetes cluster locally, you can run the entire stack via Docker Compose:
+
+1. **Start the stack**:
+   ```bash
+   docker compose up --build
+   ```
+   This automatically provisions RabbitMQ (with management console), Redis, the FastAPI job producer, and the worker consumer.
+
+2. **Access the services**:
+   - **Producer Swagger API**: [http://localhost:8080/docs](http://localhost:8080/docs)
+   - **RabbitMQ Management Dashboard**: [http://localhost:15672](http://localhost:15672) (User: `guest`, Pass: `guest`)
+
+3. **Teardown**:
+   ```bash
+   docker compose down
+   ```
+
+### Running Unit Tests
+To run the automated Python unit test suite:
+
+1. **Install dependencies**:
+   ```bash
+   pip install -r app/producer/requirements.txt -r app/worker/requirements.txt -r tests/requirements.txt
+   ```
+
+2. **Run tests**:
+   ```bash
+   pytest
+   ```
+
+### Local Kubernetes Emulation (Using `kind`)
+To test KEDA autoscaling and resilience:
 
 1.  **Start a local Kubernetes cluster**:
     ```bash
