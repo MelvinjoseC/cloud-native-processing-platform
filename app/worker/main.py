@@ -62,14 +62,21 @@ try:
 except Exception as e:
     logger.warning(f"Redis connection failed: {e}. Running without Redis status reporting.")
 
+class ShutdownAbortedException(Exception):
+    """Exception raised when worker shutdown is requested during task execution."""
+    pass
+
 def process_message(ch, method, properties, body):
     global processing_active, shutdown_requested
     processing_active = True
     
+    # We will need the task dict inside the except block, so define it as empty first
+    task = {}
+    job_id = "unknown"
     try:
         task = json.loads(body.decode("utf-8"))
-        job_id = task.get("job_id")
-        task_type = task.get("task_type")
+        job_id = task.get("job_id", "unknown")
+        task_type = task.get("task_type", "unknown")
         duration = task.get("duration_seconds", 5)
         
         logger.info(f"[{job_id}] Received task '{task_type}' (Simulated work: {duration}s)")
@@ -84,10 +91,9 @@ def process_message(ch, method, properties, body):
                 logger.error(f"Failed to update redis: {e}")
         
         # 2. Simulate CPU-heavy or network-bound processing
-        # In a real app, this could be image processing, data processing, etc.
         for elapsed in range(duration):
             if shutdown_requested:
-                logger.warning(f"[{job_id}] Shutdown requested mid-processing!")
+                raise ShutdownAbortedException("Graceful shutdown initiated during task execution.")
             time.sleep(1)
             
         logger.info(f"[{job_id}] Finished task successfully.")
@@ -104,6 +110,21 @@ def process_message(ch, method, properties, body):
         # 4. Acknowledge message processing in RabbitMQ
         ch.basic_ack(delivery_tag=method.delivery_tag)
         
+    except ShutdownAbortedException as e:
+        logger.warning(f"[{job_id}] {e} Requeuing task.")
+        # Reset status in Redis to PENDING so it can be retried cleanly
+        if redis_client and job_id != "unknown":
+            try:
+                task["status"] = "PENDING"
+                task.pop("started_at", None)
+                redis_client.set(f"job:{job_id}", json.dumps(task), ex=3600)
+            except Exception as re_err:
+                logger.error(f"Failed to reset redis status: {re_err}")
+        try:
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+        except Exception as nack_err:
+            logger.error(f"Nack failed: {nack_err}")
+            
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         # Reject message and requeue it so another worker can process it
@@ -117,6 +138,7 @@ def process_message(ch, method, properties, body):
         if shutdown_requested:
             logger.info("Finished processing current message. Exiting due to shutdown request.")
             cleanup_and_exit()
+
 
 def start_worker():
     global current_connection, current_channel
