@@ -123,12 +123,13 @@ def get_job_status(job_id: str):
     
     try:
         data = redis_client.get(f"job:{job_id}")
-        if not data:
-            raise HTTPException(status_code=404, detail="Job not found")
-        return json.loads(data)
     except Exception as e:
         logger.error(f"Redis retrieval error: {e}")
         raise HTTPException(status_code=500, detail="Error fetching job status")
+        
+    if not data:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return json.loads(data)
 
 @app.get("/metrics")
 def metrics():

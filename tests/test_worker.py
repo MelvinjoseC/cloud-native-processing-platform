@@ -1,10 +1,16 @@
 import sys
 import os
 import json
+import importlib.util
 from unittest.mock import MagicMock, patch
 
-# Add app/worker to path so we can import it
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../app/worker')))
+# Load app/worker/main.py dynamically as worker_main to avoid collision
+spec = importlib.util.spec_from_file_location(
+    "worker_main",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), '../app/worker/main.py'))
+)
+worker_app = importlib.util.module_from_spec(spec)
+sys.modules["worker_main"] = worker_app
 
 mock_redis_client = MagicMock()
 mock_pika_channel = MagicMock()
@@ -12,10 +18,10 @@ mock_pika_connection = MagicMock()
 
 mock_pika_connection.channel.return_value = mock_pika_channel
 
-# Set up patching before importing the worker
+# Set up patching before executing the module code
 with patch('redis.Redis', return_value=mock_redis_client), \
      patch('pika.BlockingConnection', return_value=mock_pika_connection):
-    import main as worker_app
+    spec.loader.exec_module(worker_app)
 
 def test_process_message_success():
     # Reset mocks
@@ -36,7 +42,7 @@ def test_process_message_success():
     method.delivery_tag = 42
     properties = MagicMock()
     
-    with patch('main.redis_client', mock_redis_client):
+    with patch('worker_main.redis_client', mock_redis_client):
         # We also mock time.sleep so the test runs instantly
         with patch('time.sleep', return_value=None):
             worker_app.process_message(ch, method, properties, body)
@@ -64,9 +70,9 @@ def test_process_message_shutdown_aborted():
     properties = MagicMock()
     
     # Set shutdown requested to True and mock cleanup_and_exit
-    with patch('main.redis_client', mock_redis_client), \
-         patch('main.shutdown_requested', True), \
-         patch('main.cleanup_and_exit') as mock_exit:
+    with patch('worker_main.redis_client', mock_redis_client), \
+         patch('worker_main.shutdown_requested', True), \
+         patch('worker_main.cleanup_and_exit') as mock_exit:
         worker_app.process_message(ch, method, properties, body)
         
         # Verify nack call with requeue=True
@@ -77,7 +83,8 @@ def test_process_message_shutdown_aborted():
         # Verify status in Redis was set back to PENDING
         assert mock_redis_client.set.call_count == 2
         args, kwargs = mock_redis_client.set.call_args
-        assert "PENDING" in args[0][1]
+        assert "PENDING" in args[1]
+
 
 def test_process_message_general_failure():
     # Reset mocks
@@ -92,7 +99,7 @@ def test_process_message_general_failure():
     method.delivery_tag = 50
     properties = MagicMock()
     
-    with patch('main.redis_client', mock_redis_client):
+    with patch('worker_main.redis_client', mock_redis_client):
         worker_app.process_message(ch, method, properties, body)
         
     # Verify nack call with requeue=True
@@ -100,8 +107,8 @@ def test_process_message_general_failure():
 
 def test_sigterm_handler_active():
     # If processing is active, sigterm_handler sets shutdown_requested=True but does not exit
-    with patch('main.cleanup_and_exit') as mock_exit, \
-         patch('main.processing_active', True):
+    with patch('worker_main.cleanup_and_exit') as mock_exit, \
+         patch('worker_main.processing_active', True):
         # Reset state
         worker_app.shutdown_requested = False
         
@@ -112,8 +119,8 @@ def test_sigterm_handler_active():
 
 def test_sigterm_handler_idle():
     # If processing is NOT active, sigterm_handler exits immediately
-    with patch('main.cleanup_and_exit') as mock_exit, \
-         patch('main.processing_active', False):
+    with patch('worker_main.cleanup_and_exit') as mock_exit, \
+         patch('worker_main.processing_active', False):
         worker_app.shutdown_requested = False
         
         worker_app.sigterm_handler(None, None)
