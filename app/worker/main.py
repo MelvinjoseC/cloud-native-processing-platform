@@ -142,6 +142,7 @@ def process_message(ch, method, properties, body):
 
 def start_worker():
     global current_connection, current_channel
+    import random
     
     credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
     parameters = pika.ConnectionParameters(
@@ -150,6 +151,10 @@ def start_worker():
         heartbeat=600,
         blocked_connection_timeout=300
     )
+    
+    base_delay = 2.0
+    max_delay = 60.0
+    retry_delay = base_delay
     
     while not shutdown_requested:
         try:
@@ -169,14 +174,27 @@ def start_worker():
             )
             
             logger.info("Worker started. Waiting for tasks...")
+            # Connection succeeded, reset retry_delay
+            retry_delay = base_delay
             current_channel.start_consuming()
             
         except pika.exceptions.AMQPConnectionError as e:
-            logger.error(f"Connection lost. Reconnecting in 5 seconds... Detail: {e}")
-            time.sleep(5)
+            if shutdown_requested:
+                break
+            jitter = random.uniform(0.0, 1.0)
+            sleep_time = min(max_delay, retry_delay) + jitter
+            logger.error(f"Connection lost. Reconnecting in {sleep_time:.2f} seconds... Detail: {e}")
+            time.sleep(sleep_time)
+            retry_delay *= 2
         except Exception as e:
-            logger.error(f"Unexpected error: {e}. Reconnecting in 5 seconds...")
-            time.sleep(5)
+            if shutdown_requested:
+                break
+            jitter = random.uniform(0.0, 1.0)
+            sleep_time = min(max_delay, retry_delay) + jitter
+            logger.error(f"Unexpected error: {e}. Reconnecting in {sleep_time:.2f} seconds...")
+            time.sleep(sleep_time)
+            retry_delay *= 2
+
 
 if __name__ == "__main__":
     start_worker()
