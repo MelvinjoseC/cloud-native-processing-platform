@@ -56,6 +56,11 @@ spec:
               value: "6379"
             - name: REDIS_DB
               value: "0"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: redis-password
           resources:
             requests:
               cpu: 100m

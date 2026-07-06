@@ -24,6 +24,7 @@ RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "tasks")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB = int(os.getenv("REDIS_DB", 0))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
 # Prometheus metrics
 HTTP_REQUESTS_TOTAL = Counter("http_requests_total", "Total HTTP Requests", ["method", "endpoint", "status"])
@@ -33,11 +34,19 @@ JOBS_SUBMITTED = Counter("jobs_submitted_total", "Total jobs submitted to Rabbit
 # Initialize Redis client (degrades gracefully if down)
 redis_client = None
 try:
-    redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, socket_timeout=3.0, decode_responses=True)
+    redis_client = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        db=REDIS_DB,
+        password=REDIS_PASSWORD,
+        socket_timeout=3.0,
+        decode_responses=True
+    )
     redis_client.ping()
     logger.info("Connected to Redis successfully.")
 except Exception as e:
     logger.warning(f"Redis connection failed: {e}. Degrading to database-less mode.")
+
 
 # Pika connection helper
 def get_rabbitmq_channel():
