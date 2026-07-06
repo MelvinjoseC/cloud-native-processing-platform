@@ -25,6 +25,12 @@ jobs:
           flake8 app/ --max-line-length=120 --exclude=venv
           black --check app/
 
+      - name: Run Unit Tests
+        run: |
+          pip install -r app/producer/requirements.txt -r app/worker/requirements.txt -r tests/requirements.txt
+          pytest
+
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
