@@ -85,6 +85,17 @@ When EKS scales down or EC2 reclaims a Spot instance, pods receive a `SIGTERM` s
 ### 4. Exponential Backoff & Jitter
 Worker connections to RabbitMQ implement an exponential backoff retry mechanism with random jitter. This prevents a thundering herd issue during startup spikes or service recovery, gracefully scaling reconnection attempts up to a maximum of 60 seconds.
 
+### 5. Advanced Production Hardening & Security Hardening
+*   **Stateful Persistence**: Converted RabbitMQ and Redis to `StatefulSet` resources with `VolumeClaimTemplates` to guarantee persistent storage of messages and cache across node restarts.
+*   **Observability & Security Audits**: 
+    *   Enabled VPC Flow Logs to CloudWatch Log Groups for auditable networking telemetry.
+    *   Enabled EKS Control Plane Logging (Audit, API Server, Authenticator) for security compliance.
+    *   Provisioned a dedicated AWS KMS Customer Managed Key (CMK) for Kubernetes secrets envelope encryption.
+    *   Configured EKS managed add-ons (`vpc-cni`, `kube-proxy`, `coredns`) with explicit lifecycle configurations.
+    *   Created worker S3 bucket with strict security boundaries (enforced server-side encryption, versioning, and blocked public access).
+*   **CI/CD Pipeline Security**: Integrated Hadolint (Dockerfile linting) and Trivy IaC static analysis scanning into the GitHub Actions CI pipeline, alongside upgrading runner action versions to modern standards.
+*   **Structured Logging & Health Checks**: Replaced stdout print logging in worker with structured JSON logs and refactored FastAPI liveness/readiness probes to support self-healing Redis reconnections.
+
 ---
 
 ## 🚀 Getting Started
