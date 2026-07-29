@@ -147,3 +147,20 @@ resource "aws_kms_alias" "eks_secrets" {
   name          = "alias/${var.cluster_name}-secrets"
   target_key_id = aws_kms_key.eks_secrets.key_id
 }
+
+# 6. EKS Managed Add-ons
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name = aws_eks_cluster.main.name
+  addon_name   = "vpc-cni"
+}
+
+resource "aws_eks_addon" "coredns" {
+  cluster_name = aws_eks_cluster.main.name
+  addon_name   = "coredns"
+  depends_on   = [aws_eks_node_group.spot_nodes] # CoreDNS pods need nodes to run
+}
+
+resource "aws_eks_addon" "kube_proxy" {
+  cluster_name = aws_eks_cluster.main.name
+  addon_name   = "kube-proxy"
+}
