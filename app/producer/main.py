@@ -75,7 +75,7 @@ async def add_metrics_middleware(request, call_next):
         
     return response
 
-@app.post("/jobs", status_code=status.HTTP_202_ACCEPTED)
+@app.post("/api/v1/jobs", status_code=status.HTTP_202_ACCEPTED)
 def submit_job(job: JobRequest):
     job_id = str(uuid.uuid4())
     job_data = {
@@ -116,7 +116,7 @@ def submit_job(job: JobRequest):
         
     return {"job_id": job_id, "status": "PENDING"}
 
-@app.get("/jobs/{job_id}")
+@app.get("/api/v1/jobs/{job_id}")
 def get_job_status(job_id: str):
     if not redis_client:
         raise HTTPException(status_code=501, detail="Redis caching unavailable. Cannot retrieve job status.")
