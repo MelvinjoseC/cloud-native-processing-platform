@@ -55,6 +55,15 @@ jobs:
           terraform init -backend=false
           terraform validate
 
+      - name: Scan IaC for security vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'terraform'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+
   build-and-scan:
     name: Build & Security Scan Containers
     runs-on: ubuntu-latest
