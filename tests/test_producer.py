@@ -73,7 +73,7 @@ def test_submit_job_success():
     
     with patch('producer_main.redis_client', mock_redis_client), \
          patch('producer_main.get_rabbitmq_channel', return_value=(mock_pika_connection, mock_pika_channel)):
-        response = client.post("/jobs", json=job_payload)
+        response = client.post("/api/v1/jobs", json=job_payload)
         assert response.status_code == 202
         data = response.json()
         assert "job_id" in data
@@ -98,7 +98,7 @@ def test_submit_job_rabbitmq_failure():
     
     with patch('producer_main.redis_client', mock_redis_client), \
          patch('producer_main.get_rabbitmq_channel', return_value=(mock_pika_connection, mock_pika_channel)):
-        response = client.post("/jobs", json=job_payload)
+        response = client.post("/api/v1/jobs", json=job_payload)
         assert response.status_code == 503
         assert "Task queue unavailable" in response.json()["detail"]
         
@@ -121,7 +121,7 @@ def test_get_job_status_success():
     mock_redis_client.get.return_value = json.dumps(job_data)
     
     with patch('producer_main.redis_client', mock_redis_client):
-        response = client.get(f"/jobs/{job_id}")
+        response = client.get(f"/api/v1/jobs/{job_id}")
         assert response.status_code == 200
         assert response.json() == job_data
         mock_redis_client.get.assert_called_once_with(f"job:{job_id}")
@@ -131,6 +131,6 @@ def test_get_job_status_not_found():
     mock_redis_client.get.return_value = None
     
     with patch('producer_main.redis_client', mock_redis_client):
-        response = client.get("/jobs/non-existent")
+        response = client.get("/api/v1/jobs/non-existent")
         assert response.status_code == 404
         assert "Job not found" in response.json()["detail"]
