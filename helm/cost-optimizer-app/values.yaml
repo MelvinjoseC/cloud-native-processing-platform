@@ -24,6 +24,9 @@ producer:
   service:
     port: 80
     targetPort: 8000
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 worker:
   image:
@@ -45,6 +48,10 @@ worker:
     cooldownPeriod: 30
     queueLengthTriggerValue: 5
   terminationGracePeriodSeconds: 60
+  nodeSelector:
+    lifecycle: spot
+  tolerations: []
+  affinity: {}
 
 rabbitmq:
   image: rabbitmq:3.12-management
@@ -55,6 +62,9 @@ rabbitmq:
     limits:
       cpu: 500m
       memory: 512Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 redis:
   image: redis:7.2-alpine
@@ -65,6 +75,9 @@ redis:
     limits:
       cpu: 200m
       memory: 128Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 resilience:
   pdb:
