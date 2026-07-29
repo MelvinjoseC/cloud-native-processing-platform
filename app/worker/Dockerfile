@@ -13,6 +13,12 @@ RUN pip install --user --no-cache-dir -r requirements.txt
 # Stage 2: Final minimal image
 FROM python:3.12-slim AS runner
 
+# Metadata labels
+LABEL org.opencontainers.image.title="Cloud-Native Job Worker" \
+      org.opencontainers.image.description="Asynchronous processing worker scaling with KEDA" \
+      org.opencontainers.image.source="https://github.com/MelvinjoseC/cloud-native-processing-platform" \
+      org.opencontainers.image.version="1.0.0"
+
 WORKDIR /app
 
 # Create a non-root user and group
