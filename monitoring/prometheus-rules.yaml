@@ -28,10 +28,28 @@ spec:
             description: "The background worker deployment has reached its max replica count of 10. Queue processing speed may degrade."
 
         - alert: RedisCacheOffline
-          expr: http_requests_total{endpoint="/jobs", status="503"} > 5
+          expr: http_requests_total{endpoint="/api/v1/jobs", status="503"} > 5
           for: 1m
           labels:
             severity: critical
           annotations:
             summary: "FastAPI producer experiencing high 503 error rate"
             description: "The Producer service is returning 503 codes, likely due to broker or database disconnection."
+
+        - alert: WorkerCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total{container="worker"}[5m]) * 60 > 2
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Worker container is restarting frequently"
+            description: "The worker pod container is restarting more than 2 times in 5 minutes, indicating potential crash looping."
+
+        - alert: HighRequestLatency
+          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, endpoint)) > 2
+          for: 3m
+          labels:
+            severity: warning
+          annotations:
+            summary: "FastAPI endpoint experiencing high latency"
+            description: "The 95th percentile request duration for endpoint {{ $labels.endpoint }} is above 2 seconds for over 3 minutes."
