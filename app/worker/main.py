@@ -8,8 +8,23 @@ import redis
 import pika
 
 # Logging setup
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name
+        }
+        if record.exc_info:
+            log_record["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_record)
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(JSONFormatter())
 logger = logging.getLogger("worker")
+logger.setLevel(logging.INFO)
+logger.addHandler(handler)
 
 # Env configurations
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
