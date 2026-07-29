@@ -141,6 +141,7 @@ def healthz():
 
 @app.get("/readyz")
 def readyz():
+    global redis_client
     # Verify connectivity to RabbitMQ
     try:
         credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
@@ -150,16 +151,28 @@ def readyz():
         logger.error(f"Readyz check failed (RabbitMQ offline): {e}")
         raise HTTPException(status_code=503, detail="RabbitMQ not reachable")
     
-    # Verify connectivity to Redis
-    if redis_client:
+    # Verify or initialize connectivity to Redis
+    if redis_client is None:
+        try:
+            redis_client = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                db=REDIS_DB,
+                password=REDIS_PASSWORD,
+                socket_timeout=1.0,
+                decode_responses=True
+            )
+            redis_client.ping()
+            logger.info("Re-initialized and connected to Redis successfully during readyz check.")
+        except Exception as e:
+            logger.warning(f"Readyz check: Redis is still unreachable: {e}")
+            raise HTTPException(status_code=503, detail="Redis cache not reachable")
+    else:
         try:
             redis_client.ping()
         except Exception as e:
-            logger.error(f"Readyz check failed (Redis offline): {e}")
+            logger.error(f"Readyz check failed (Redis connection lost): {e}")
             raise HTTPException(status_code=503, detail="Redis cache not reachable")
-    else:
-        logger.error("Readyz check failed: Redis client is not initialized")
-        raise HTTPException(status_code=503, detail="Redis client not initialized")
         
     return {"status": "ready"}
 
