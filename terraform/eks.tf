@@ -35,6 +35,13 @@ resource "aws_eks_cluster" "main" {
     endpoint_public_access  = true
   }
 
+  encryption_config {
+    resources = ["secrets"]
+    provider {
+      key_arn = aws_kms_key.eks_secrets.arn
+    }
+  }
+
   depends_on = [
     aws_iam_role_policy_attachment.eks_cluster_policy
   ]
@@ -112,4 +119,31 @@ resource "aws_iam_openid_connect_provider" "eks" {
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
   url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
+}
+
+# KMS Key for EKS secrets envelope encryption
+resource "aws_kms_key" "eks_secrets" {
+  description             = "KMS key for EKS secrets envelope encryption"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "Enable IAM User Permissions"
+        Effect = "Allow"
+        Principal = {
+          AWS = "*"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_kms_alias" "eks_secrets" {
+  name          = "alias/${var.cluster_name}-secrets"
+  target_key_id = aws_kms_key.eks_secrets.key_id
 }
