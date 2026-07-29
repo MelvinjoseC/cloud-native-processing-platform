@@ -5,7 +5,7 @@
 set -euo pipefail
 
 NAMESPACE="processing-platform"
-API_URL="http://localhost:8080" # Assumes port-forward to producer is active on 8080
+API_URL="http://localhost:8080/api/v1" # Updated to include api/v1 prefix
 TASK_COUNT=50
 SUBMITTED_JOBS=()
 
@@ -16,11 +16,28 @@ echo "========================================================="
 # Helper to check if API is available
 wait_for_api() {
   echo "Waiting for Producer API to be ready..."
-  until curl -sf "${API_URL}/healthz" > /dev/null; do
+  # check using healthz endpoint (kept at root level)
+  until curl -sf "http://localhost:8080/healthz" > /dev/null; do
     sleep 2
   done
   echo "Producer API is online!"
 }
+
+# Trap to dump logs on failure
+failure_handler() {
+  echo "========================================================="
+  echo " ERROR DETECTED: Dumping Pod Logs for Debugging"
+  echo "========================================================="
+  kubectl get pods -n "$NAMESPACE" || true
+  echo "--- Producer Logs ---"
+  kubectl logs -n "$NAMESPACE" -l app=producer --tail=50 || true
+  echo "--- Worker Logs ---"
+  kubectl logs -n "$NAMESPACE" -l app=worker --tail=50 || true
+  echo "--- RabbitMQ Logs ---"
+  kubectl logs -n "$NAMESPACE" -l app=rabbitmq --tail=50 || true
+}
+
+trap failure_handler ERR
 
 wait_for_api
 
@@ -72,7 +89,7 @@ echo "RabbitMQ pod deleted. StatefulSet/Deployment should spin up a fresh broker
 echo "---------------------------------------------------------"
 echo " Step 4: Waiting for system to recover and process jobs..."
 echo "---------------------------------------------------------"
-sleep 20 # Let RabbitMQ and workers recover
+sleep 25 # Let RabbitMQ and workers recover (slightly increased delay for statefulset restart)
 
 # 6. Verify task statuses (Zero message loss verification)
 echo "---------------------------------------------------------"
@@ -121,6 +138,7 @@ fi
 
 if [ "$failed_jobs" -gt 0 ]; then
   echo "WARNING: $failed_jobs jobs failed! Broker recovery or worker crash handler needs optimization."
+  exit 1
 else
   echo "SUCCESS: 100% of jobs processed successfully after broker and worker crashes! Zero message loss."
 fi
