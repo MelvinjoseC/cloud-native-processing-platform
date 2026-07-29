@@ -5,6 +5,14 @@ provider "aws" {
   region = var.aws_region
 }
 
+locals {
+  common_tags = {
+    Environment = "dev"
+    Project     = "processing-platform"
+    ManagedBy   = "terraform"
+  }
+}
+
 data "aws_availability_zones" "available" {
   state = "available"
 }
@@ -14,19 +22,19 @@ resource "aws_vpc" "eks_vpc" {
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  tags = {
-    Name                                            = "${var.cluster_name}-vpc"
+  tags = merge(local.common_tags, {
+    Name                                      = "${var.cluster_name}-vpc"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
-  }
+  })
 }
 
 # Internet Gateway
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.eks_vpc.id
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.cluster_name}-igw"
-  }
+  })
 }
 
 # Subnets
@@ -37,11 +45,11 @@ resource "aws_subnet" "public" {
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
 
-  tags = {
-    Name                                            = "${var.cluster_name}-public-${count.index}"
+  tags = merge(local.common_tags, {
+    Name                                      = "${var.cluster_name}-public-${count.index}"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
-    "kubernetes.io/role/elb"                        = "1"
-  }
+    "kubernetes.io/role/elb"                  = "1"
+  })
 }
 
 resource "aws_subnet" "private" {
@@ -50,29 +58,29 @@ resource "aws_subnet" "private" {
   cidr_block        = cidrsubnet(var.vpc_cidr, 8, count.index + 10)
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
-  tags = {
-    Name                                            = "${var.cluster_name}-private-${count.index}"
+  tags = merge(local.common_tags, {
+    Name                                      = "${var.cluster_name}-private-${count.index}"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"               = "1"
-  }
+    "kubernetes.io/role/internal-elb"         = "1"
+  })
 }
 
 # Elastic IP for NAT Gateway
 resource "aws_eip" "nat" {
   domain = "vpc"
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.cluster_name}-nat-eip"
-  }
+  })
 }
 
-# NAT Gateway (Single NAT Gateway for cost-efficiency in dev/prod-light, multi-AZ NAT for high resilience can be configured)
+# NAT Gateway
 resource "aws_nat_gateway" "nat" {
   allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.public[0].id
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.cluster_name}-nat-gw"
-  }
+  })
 
   depends_on = [aws_internet_gateway.igw]
 }
@@ -86,9 +94,9 @@ resource "aws_route_table" "public" {
     gateway_id = aws_internet_gateway.igw.id
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.cluster_name}-public-rt"
-  }
+  })
 }
 
 resource "aws_route_table" "private" {
@@ -99,9 +107,9 @@ resource "aws_route_table" "private" {
     nat_gateway_id = aws_nat_gateway.nat.id
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.cluster_name}-private-rt"
-  }
+  })
 }
 
 # Route Table Associations
