@@ -59,7 +59,8 @@ echo "Sleeping 5 seconds to let scale-up begin..."
 sleep 5
 
 # 2. Verify worker replicas are scaling up via KEDA
-workers_count=$(kubectl get deployment worker -n "$NAMESPACE" -o jsonpath='{.status.replicas}')
+workers_count=$(kubectl get deployment worker -n "$NAMESPACE" -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+workers_count="${workers_count:-0}"
 echo "Current worker replicas: $workers_count"
 if [ "$workers_count" -eq 0 ]; then
   echo "ERROR: KEDA failed to scale workers from 0!"
@@ -71,19 +72,25 @@ echo "SUCCESS: KEDA scaled workers up to $workers_count."
 echo "---------------------------------------------------------"
 echo " Step 2: Injecting Worker Pod Chaos (SIGTERM/Deletion)..."
 echo "---------------------------------------------------------"
-worker_pod=$(kubectl get pods -n "$NAMESPACE" -l app=worker --no-headers | head -n 1 | awk '{print $1}')
-echo "Terminating active worker pod: $worker_pod"
-kubectl delete pod "$worker_pod" -n "$NAMESPACE" --grace-period=10
-echo "Worker pod deleted. Kubernetes scheduler should automatically replace it."
+worker_pod=$(kubectl get pods -n "$NAMESPACE" -l app=worker --no-headers 2>/dev/null | head -n 1 | awk '{print $1}')
+if [ -n "$worker_pod" ]; then
+  echo "Terminating active worker pod: $worker_pod"
+  kubectl delete pod "$worker_pod" -n "$NAMESPACE" --grace-period=10
+  echo "Worker pod deleted. Kubernetes scheduler should automatically replace it."
+else
+  echo "No active worker pod found at this moment."
+fi
 
 # 4. Inject Broker Chaos (Kill RabbitMQ broker)
 echo "---------------------------------------------------------"
 echo " Step 3: Injecting Message Broker Failure..."
 echo "---------------------------------------------------------"
-rabbitmq_pod=$(kubectl get pods -n "$NAMESPACE" -l app=rabbitmq --no-headers | awk '{print $1}')
-echo "Deleting RabbitMQ pod: $rabbitmq_pod"
-kubectl delete pod "$rabbitmq_pod" -n "$NAMESPACE" --now
-echo "RabbitMQ pod deleted. StatefulSet/Deployment should spin up a fresh broker."
+rabbitmq_pod=$(kubectl get pods -n "$NAMESPACE" -l app=rabbitmq --no-headers 2>/dev/null | head -n 1 | awk '{print $1}')
+if [ -n "$rabbitmq_pod" ]; then
+  echo "Deleting RabbitMQ pod: $rabbitmq_pod"
+  kubectl delete pod "$rabbitmq_pod" -n "$NAMESPACE" --now
+  echo "RabbitMQ pod deleted. StatefulSet controller should spin up a fresh broker."
+fi
 
 # 5. Wait for recovery and processing completion
 echo "---------------------------------------------------------"
@@ -149,7 +156,8 @@ echo " Step 6: Verifying KEDA scale-down to 0..."
 echo "---------------------------------------------------------"
 echo "Waiting 35 seconds for cool-down period..."
 sleep 35
-final_workers=$(kubectl get deployment worker -n "$NAMESPACE" -o jsonpath='{.status.replicas}')
+final_workers=$(kubectl get deployment worker -n "$NAMESPACE" -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+final_workers="${final_workers:-0}"
 echo "Final worker replicas: $final_workers"
 if [ "$final_workers" -eq 0 ]; then
   echo "SUCCESS: Platform scaled back down to 0 workers. Cost optimization verified!"
