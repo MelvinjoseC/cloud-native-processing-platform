@@ -24,6 +24,10 @@ spec:
     metadata:
       labels:
         app: worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "9102"
     spec:
       serviceAccountName: worker-sa
       terminationGracePeriodSeconds: 60  # Allows active tasks to complete within 60s when scaling down
@@ -35,6 +39,9 @@ spec:
         - name: worker
           image: ghcr.io/melvinjosec/cloud-native-processing-platform-worker:latest
           imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9102
+              name: metrics
           env:
             - name: RABBITMQ_HOST
               value: "rabbitmq"
@@ -48,6 +55,12 @@ spec:
                 secretKeyRef:
                   name: platform-secrets
                   key: rabbitmq-pass
+            - name: RABBITMQ_DLQ
+              value: "tasks_dlq"
+            - name: MAX_RETRIES
+              value: "3"
+            - name: METRICS_PORT
+              value: "9102"
             - name: REDIS_HOST
               value: "redis"
             - name: REDIS_PORT
@@ -74,3 +87,18 @@ spec:
                 - main.py
             initialDelaySeconds: 10
             periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: processing-platform
+  labels:
+    app: worker
+spec:
+  ports:
+    - port: 9102
+      targetPort: 9102
+      name: metrics
+  selector:
+    app: worker

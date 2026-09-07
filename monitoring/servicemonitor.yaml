@@ -13,3 +13,19 @@ spec:
     - port: http
       path: /metrics
       interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: worker-monitor
+  namespace: processing-platform
+  labels:
+    release: prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: worker
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
