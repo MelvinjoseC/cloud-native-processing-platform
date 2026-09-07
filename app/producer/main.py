@@ -3,7 +3,8 @@ import uuid
 import json
 import logging
 import time
-from fastapi import FastAPI, HTTPException, status, Response
+from typing import Optional, List
+from fastapi import FastAPI, HTTPException, status, Response, Query
 from pydantic import BaseModel, Field
 import redis
 import pika
@@ -132,6 +133,43 @@ def submit_job(job: JobRequest):
         raise HTTPException(status_code=503, detail="Task queue unavailable. Please try again later.")
         
     return {"job_id": job_id, "status": "PENDING"}
+
+@app.get("/api/v1/jobs")
+def list_jobs(
+    status_filter: Optional[str] = Query(None, alias="status", description="Filter by job status (PENDING, PROCESSING, COMPLETED, FAILED, CANCELLED)"),
+    limit: int = Query(50, ge=1, le=100, description="Max jobs to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination")
+):
+    if not redis_client:
+        raise HTTPException(status_code=501, detail="Redis caching unavailable. Cannot list jobs.")
+    
+    try:
+        keys = redis_client.keys("job:*")
+    except Exception as e:
+        logger.error(f"Error retrieving job keys from Redis: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching jobs list")
+        
+    jobs = []
+    for key in keys:
+        try:
+            val = redis_client.get(key)
+            if val:
+                job_obj = json.loads(val)
+                if status_filter is None or job_obj.get("status", "").upper() == status_filter.upper():
+                    jobs.append(job_obj)
+        except Exception:
+            continue
+            
+    # Sort newest first based on created_at timestamp
+    jobs.sort(key=lambda j: j.get("created_at", 0), reverse=True)
+    
+    total = len(jobs)
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "jobs": jobs[offset:offset + limit]
+    }
 
 @app.get("/api/v1/jobs/{job_id}")
 def get_job_status(job_id: str):
