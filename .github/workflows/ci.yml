@@ -37,10 +37,19 @@ jobs:
           dockerfile: app/worker/Dockerfile
           failure-threshold: warning
 
-      - name: Run Unit Tests
+      - name: Run Unit Tests & Coverage
         run: |
           pip install -r app/producer/requirements.txt -r app/worker/requirements.txt -r tests/requirements.txt
-          pytest
+          pytest --cov=app --cov-report=term-missing
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Lint Helm Chart
+        run: |
+          helm lint helm/cost-optimizer-app
 
 
       - name: Setup Terraform
