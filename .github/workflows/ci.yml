@@ -125,8 +125,8 @@ jobs:
           kubectl apply -k k8s/overlays/dev
           
           echo "Waiting for core services (RabbitMQ, Redis, Producer) to be ready..."
-          kubectl rollout status deployment/rabbitmq -n processing-platform --timeout=120s
-          kubectl rollout status deployment/redis -n processing-platform --timeout=120s
+          kubectl rollout status statefulset/rabbitmq -n processing-platform --timeout=120s
+          kubectl rollout status statefulset/redis -n processing-platform --timeout=120s
           kubectl rollout status deployment/producer -n processing-platform --timeout=120s
 
       - name: Port-Forward API
