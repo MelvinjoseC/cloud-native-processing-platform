@@ -68,6 +68,11 @@ spec:
               value: "6379"
             - name: REDIS_DB
               value: "0"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: redis-password
           resources:
             {{- toYaml .Values.producer.resources | nindent 12 }}
           startupProbe:
