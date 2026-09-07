@@ -53,3 +53,21 @@ spec:
           annotations:
             summary: "FastAPI endpoint experiencing high latency"
             description: "The 95th percentile request duration for endpoint {{ $labels.endpoint }} is above 2 seconds for over 3 minutes."
+
+        - alert: DeadLetterQueueHasMessages
+          expr: rabbitmq_queue_messages{queue="tasks_dlq"} > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "RabbitMQ Dead Letter Queue contains failed messages"
+            description: "The DLQ 'tasks_dlq' has {{ $value }} unprocessed poisoned messages. Investigate worker errors."
+
+        - alert: WorkerHighTaskFailureRate
+          expr: sum(rate(worker_jobs_processed_total{status="failed"}[5m])) / sum(rate(worker_jobs_processed_total[5m])) > 0.1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High worker job failure rate detected"
+            description: "Over 10% of worker tasks are failing and being routed to DLQ in the last 5 minutes."
