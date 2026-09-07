@@ -31,6 +31,8 @@ RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "guest")
 RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "guest")
 RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "tasks")
+RABBITMQ_DLQ = os.getenv("RABBITMQ_DLQ", "tasks_dlq")
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
@@ -104,6 +106,19 @@ def process_message(ch, method, properties, body):
         
         logger.info(f"[{job_id}] Received task '{task_type}' (Simulated work: {duration}s)")
         
+        # Check if job was cancelled by client
+        if redis_client and job_id != "unknown":
+            try:
+                cached_data = redis_client.get(f"job:{job_id}")
+                if cached_data:
+                    cached_obj = json.loads(cached_data)
+                    if cached_obj.get("status") == "CANCELLED":
+                        logger.info(f"[{job_id}] Task was cancelled by client. Skipping execution.")
+                        ch.basic_ack(delivery_tag=method.delivery_tag)
+                        return
+            except Exception as check_err:
+                logger.warning(f"[{job_id}] Could not check cancellation status: {check_err}")
+
         # 1. Update status to PROCESSING in Redis
         if redis_client:
             try:
@@ -149,12 +164,47 @@ def process_message(ch, method, properties, body):
             logger.error(f"Nack failed: {nack_err}")
             
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
-        # Reject message and requeue it so another worker can process it
-        try:
-            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-        except Exception as nack_err:
-            logger.error(f"Nack failed: {nack_err}")
+        logger.error(f"[{job_id}] Error processing message: {e}")
+        
+        headers = properties.headers if (properties and hasattr(properties, "headers") and isinstance(properties.headers, dict)) else {}
+        retry_count = headers.get("x-retry-count", 0) + 1
+        
+        if retry_count > MAX_RETRIES:
+            logger.error(f"[{job_id}] Exceeded maximum retries ({MAX_RETRIES}). Routing poison message to DLQ '{RABBITMQ_DLQ}'.")
+            if redis_client and job_id != "unknown":
+                try:
+                    task["status"] = "FAILED"
+                    task["error"] = str(e)
+                    task["failed_at"] = time.time()
+                    task["retry_count"] = retry_count
+                    redis_client.set(f"job:{job_id}", json.dumps(task), ex=3600)
+                except Exception as re_err:
+                    logger.error(f"Failed to update redis status to FAILED: {re_err}")
+                    
+            try:
+                dlq_headers = dict(headers)
+                dlq_headers["x-death-reason"] = str(e)
+                dlq_headers["x-retry-count"] = retry_count
+                ch.basic_publish(
+                    exchange="",
+                    routing_key=RABBITMQ_DLQ,
+                    body=body,
+                    properties=pika.BasicProperties(delivery_mode=2, headers=dlq_headers)
+                )
+                logger.info(f"[{job_id}] Successfully forwarded poison message to DLQ '{RABBITMQ_DLQ}'.")
+            except Exception as dlq_err:
+                logger.error(f"Failed to forward message to DLQ: {dlq_err}")
+                
+            try:
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+            except Exception as ack_err:
+                logger.error(f"Ack failed after DLQ routing: {ack_err}")
+        else:
+            logger.warning(f"[{job_id}] Task processing failed (attempt {retry_count}/{MAX_RETRIES}): {e}")
+            try:
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            except Exception as nack_err:
+                logger.error(f"Nack failed: {nack_err}")
             
     finally:
         processing_active = False
@@ -185,8 +235,9 @@ def start_worker():
             current_connection = pika.BlockingConnection(parameters)
             current_channel = current_connection.channel()
             
-            # Ensure queue exists
+            # Ensure queues exist
             current_channel.queue_declare(queue=RABBITMQ_QUEUE, durable=True)
+            current_channel.queue_declare(queue=RABBITMQ_DLQ, durable=True)
             
             # Prefetch count = 1 to distribute load evenly among workers
             current_channel.basic_qos(prefetch_count=1)
