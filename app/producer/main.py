@@ -148,6 +148,34 @@ def get_job_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     return json.loads(data)
 
+@app.delete("/api/v1/jobs/{job_id}")
+def cancel_job(job_id: str):
+    if not redis_client:
+        raise HTTPException(status_code=501, detail="Redis caching unavailable. Cannot cancel job.")
+    
+    try:
+        data = redis_client.get(f"job:{job_id}")
+    except Exception as e:
+        logger.error(f"Redis retrieval error during cancellation: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving job for cancellation")
+        
+    if not data:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    job_data = json.loads(data)
+    current_status = job_data.get("status")
+    
+    if current_status in ["PENDING", "PROCESSING"]:
+        job_data["status"] = "CANCELLED"
+        job_data["cancelled_at"] = time.time()
+        redis_client.set(f"job:{job_id}", json.dumps(job_data), ex=3600)
+        logger.info(f"Job {job_id} marked as CANCELLED (was {current_status}).")
+        return {"job_id": job_id, "status": "CANCELLED", "message": f"Job was {current_status} and is now cancelled"}
+    else:
+        redis_client.delete(f"job:{job_id}")
+        logger.info(f"Job {job_id} ({current_status}) removed from cache.")
+        return {"job_id": job_id, "status": "DELETED", "message": f"Job in '{current_status}' state removed from cache"}
+
 @app.get("/metrics")
 def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
