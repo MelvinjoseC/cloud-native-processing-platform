@@ -9,9 +9,26 @@ import redis
 import pika
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
+import sys
+
 # Logging setup
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name
+        }
+        if record.exc_info:
+            log_record["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_record)
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(JSONFormatter())
 logger = logging.getLogger("producer")
+logger.setLevel(logging.INFO)
+logger.addHandler(handler)
 
 app = FastAPI(title="Cloud-Native Job Producer", version="1.0.0")
 
