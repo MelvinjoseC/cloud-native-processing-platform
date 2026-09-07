@@ -85,16 +85,25 @@ When EKS scales down or EC2 reclaims a Spot instance, pods receive a `SIGTERM` s
 ### 4. Exponential Backoff & Jitter
 Worker connections to RabbitMQ implement an exponential backoff retry mechanism with random jitter. This prevents a thundering herd issue during startup spikes or service recovery, gracefully scaling reconnection attempts up to a maximum of 60 seconds.
 
-### 5. Advanced Production Hardening & Security Hardening
-*   **Stateful Persistence**: Converted RabbitMQ and Redis to `StatefulSet` resources with `VolumeClaimTemplates` to guarantee persistent storage of messages and cache across node restarts.
-*   **Observability & Security Audits**: 
-    *   Enabled VPC Flow Logs to CloudWatch Log Groups for auditable networking telemetry.
-    *   Enabled EKS Control Plane Logging (Audit, API Server, Authenticator) for security compliance.
-    *   Provisioned a dedicated AWS KMS Customer Managed Key (CMK) for Kubernetes secrets envelope encryption.
-    *   Configured EKS managed add-ons (`vpc-cni`, `kube-proxy`, `coredns`) with explicit lifecycle configurations.
-    *   Created worker S3 bucket with strict security boundaries (enforced server-side encryption, versioning, and blocked public access).
-*   **CI/CD Pipeline Security**: Integrated Hadolint (Dockerfile linting) and Trivy IaC static analysis scanning into the GitHub Actions CI pipeline, alongside upgrading runner action versions to modern standards.
-*   **Structured Logging & Health Checks**: Replaced stdout print logging in worker with structured JSON logs and refactored FastAPI liveness/readiness probes to support self-healing Redis reconnections.
+### 5. Dead Letter Queue (DLQ) & Poison Pill Resilience
+To eliminate infinite retry crash loops when corrupt or poisoning messages arrive, the consumer tracks delivery attempts:
+*   **Retry Threshold**: If a task fails, it is retried up to `MAX_RETRIES = 3` with exponential backoff.
+*   **Quarantine in DLQ**: After 3 failed attempts, the message is routed to `tasks_dlq` with failure headers (`x-death-reason`, `x-retry-count`), marked as `FAILED` in Redis, and acknowledged to unblock the main processing queue.
+
+### 6. S3 Payload Archival & AWS IRSA Integration
+Leveraging IAM Roles for Service Accounts (IRSA):
+*   **Payload Storage**: When `S3_BUCKET` is configured, completed task results are uploaded to `s3://<S3_BUCKET>/results/{job_id}.json`.
+*   **Least Privilege**: The worker assumes the dedicated IAM role defined in [irsa.tf](terraform/irsa.tf) via the EKS OIDC provider without storing permanent AWS credentials.
+
+### 7. Dual-Service Prometheus Telemetry & Grafana Dashboard
+*   **Producer Metrics (Port 8000)**: Ingests HTTP request counts, endpoint latencies (P50, P95), and jobs submitted.
+*   **Worker Metrics (Port 9102)**: Exposes `worker_jobs_processed_total` (by status and task type), `worker_job_duration_seconds`, and `worker_active_jobs`.
+*   **Grafana Dashboard**: Importable JSON dashboard available in [monitoring/dashboards/platform-overview.json](monitoring/dashboards/platform-overview.json).
+*   **Unified Structured Logging**: Both Producer and Worker emit structured JSON logs parsed by Promtail into Loki.
+
+### 8. Multi-Environment GitOps & Operational Runbook
+*   **Environments**: Declarative Kustomize overlays for [dev](k8s/overlays/dev) and high-availability [prod](k8s/overlays/prod) with pod anti-affinity.
+*   **Runbook**: Detailed troubleshooting, scaling, and incident response procedures are documented in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ---
 
