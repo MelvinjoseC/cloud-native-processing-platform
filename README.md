@@ -1,6 +1,6 @@
 # Cloud-Native Cost-Optimized Processing Platform with Scale-to-Zero Workers
 
-![CI/CD Pipeline](https://github.com/MelvinjoseC/fastapi-k8s-helm-cicd/actions/workflows/ci.yml/badge.svg)
+![CI/CD Pipeline](https://github.com/MelvinjoseC/cloud-native-processing-platform/actions/workflows/ci.yml/badge.svg)
 ![Terraform](https://img.shields.io/badge/IaC-Terraform-blueviolet)
 ![AWS EKS](https://img.shields.io/badge/Kubernetes-EKS-orange)
 ![ArgoCD](https://img.shields.io/badge/GitOps-ArgoCD-blue)

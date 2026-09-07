@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/MelvinjoseC/fastapi-k8s-helm-cicd.git' # The user's target repository
+    repoURL: 'https://github.com/MelvinjoseC/cloud-native-processing-platform.git' # The target GitOps repository
     targetRevision: HEAD
     path: k8s/overlays/dev # Deploys the Kustomize overlay containing KEDA config
   destination:
