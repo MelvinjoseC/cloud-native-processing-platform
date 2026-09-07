@@ -6,6 +6,14 @@ import logging
 import signal
 import redis
 import pika
+from prometheus_client import Counter, Histogram, Gauge, start_http_server
+
+METRICS_PORT = int(os.getenv("METRICS_PORT", "9102"))
+
+# Prometheus metrics
+WORKER_JOBS_PROCESSED_TOTAL = Counter("worker_jobs_processed_total", "Total jobs processed by worker", ["status", "task_type"])
+WORKER_JOB_DURATION_SECONDS = Histogram("worker_job_duration_seconds", "Duration of worker task execution in seconds", ["task_type"])
+WORKER_ACTIVE_JOBS = Gauge("worker_active_jobs", "Current active jobs being processed by worker")
 
 # Logging setup
 class JSONFormatter(logging.Formatter):
@@ -122,10 +130,12 @@ class ShutdownAbortedException(Exception):
 def process_message(ch, method, properties, body):
     global processing_active, shutdown_requested
     processing_active = True
+    WORKER_ACTIVE_JOBS.inc()
     
     # We will need the task dict inside the except block, so define it as empty first
     task = {}
     job_id = "unknown"
+    task_type = "unknown"
     try:
         task = json.loads(body.decode("utf-8"))
         job_id = task.get("job_id", "unknown")
@@ -142,6 +152,7 @@ def process_message(ch, method, properties, body):
                     cached_obj = json.loads(cached_data)
                     if cached_obj.get("status") == "CANCELLED":
                         logger.info(f"[{job_id}] Task was cancelled by client. Skipping execution.")
+                        WORKER_JOBS_PROCESSED_TOTAL.labels(status="cancelled", task_type=task_type).inc()
                         ch.basic_ack(delivery_tag=method.delivery_tag)
                         return
             except Exception as check_err:
@@ -175,8 +186,12 @@ def process_message(ch, method, properties, body):
                 
         # 4. Archive payload to S3 if configured
         archive_payload_to_s3(job_id, task)
+
+        # 5. Record completion metrics
+        WORKER_JOBS_PROCESSED_TOTAL.labels(status="completed", task_type=task_type).inc()
+        WORKER_JOB_DURATION_SECONDS.labels(task_type=task_type).observe(duration)
                 
-        # 5. Acknowledge message processing in RabbitMQ
+        # 6. Acknowledge message processing in RabbitMQ
         ch.basic_ack(delivery_tag=method.delivery_tag)
         
     except ShutdownAbortedException as e:
@@ -202,6 +217,7 @@ def process_message(ch, method, properties, body):
         
         if retry_count > MAX_RETRIES:
             logger.error(f"[{job_id}] Exceeded maximum retries ({MAX_RETRIES}). Routing poison message to DLQ '{RABBITMQ_DLQ}'.")
+            WORKER_JOBS_PROCESSED_TOTAL.labels(status="failed", task_type=task_type).inc()
             if redis_client and job_id != "unknown":
                 try:
                     task["status"] = "FAILED"
@@ -239,6 +255,7 @@ def process_message(ch, method, properties, body):
             
     finally:
         processing_active = False
+        WORKER_ACTIVE_JOBS.dec()
         if shutdown_requested:
             logger.info("Finished processing current message. Exiting due to shutdown request.")
             cleanup_and_exit()
@@ -259,6 +276,13 @@ def start_worker():
     base_delay = 2.0
     max_delay = 60.0
     retry_delay = base_delay
+    
+    # Start Prometheus metrics server
+    try:
+        start_http_server(METRICS_PORT)
+        logger.info(f"Prometheus metrics server started on port {METRICS_PORT}.")
+    except Exception as metrics_err:
+        logger.warning(f"Could not start metrics server on port {METRICS_PORT}: {metrics_err}")
     
     while not shutdown_requested:
         try:

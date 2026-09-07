@@ -35,4 +35,6 @@ ENV PYTHONUNBUFFERED=1
 
 USER 1000:1000
 
+EXPOSE 9102
+
 CMD ["python", "main.py"]
