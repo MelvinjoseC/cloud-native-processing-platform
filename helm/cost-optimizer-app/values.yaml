@@ -62,6 +62,11 @@ rabbitmq:
     limits:
       cpu: 500m
       memory: 512Mi
+  persistence:
+    enabled: true
+    accessMode: ReadWriteOnce
+    size: 2Gi
+    storageClass: ""
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -75,6 +80,11 @@ redis:
     limits:
       cpu: 200m
       memory: 128Mi
+  persistence:
+    enabled: true
+    accessMode: ReadWriteOnce
+    size: 1Gi
+    storageClass: ""
   nodeSelector: {}
   tolerations: []
   affinity: {}
