@@ -39,6 +39,34 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB = int(os.getenv("REDIS_DB", 0))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
+# S3 configurations for payload archival
+S3_BUCKET = os.getenv("S3_BUCKET", None)
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+s3_client = None
+if S3_BUCKET:
+    try:
+        import boto3
+        s3_client = boto3.client("s3", region_name=AWS_REGION)
+        logger.info(f"S3 client initialized for payload archival to bucket '{S3_BUCKET}'.")
+    except Exception as s3_init_err:
+        logger.warning(f"Could not initialize S3 client: {s3_init_err}. S3 archival disabled.")
+
+def archive_payload_to_s3(job_id: str, task: dict):
+    if not s3_client or not S3_BUCKET:
+        return
+    try:
+        s3_key = f"results/{job_id}.json"
+        s3_client.put_object(
+            Bucket=S3_BUCKET,
+            Key=s3_key,
+            Body=json.dumps(task),
+            ContentType="application/json"
+        )
+        logger.info(f"[{job_id}] Successfully archived payload to s3://{S3_BUCKET}/{s3_key}")
+    except Exception as upload_err:
+        logger.error(f"[{job_id}] Failed to archive payload to S3: {upload_err}")
+
 # Graceful shutdown state
 shutdown_requested = False
 current_channel = None
@@ -145,7 +173,10 @@ def process_message(ch, method, properties, body):
             except Exception as e:
                 logger.error(f"Failed to update redis: {e}")
                 
-        # 4. Acknowledge message processing in RabbitMQ
+        # 4. Archive payload to S3 if configured
+        archive_payload_to_s3(job_id, task)
+                
+        # 5. Acknowledge message processing in RabbitMQ
         ch.basic_ack(delivery_tag=method.delivery_tag)
         
     except ShutdownAbortedException as e:
