@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from fastapi import FastAPI, HTTPException, status, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import redis
 import pika
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
@@ -74,9 +74,9 @@ def get_rabbitmq_channel():
     return connection, channel
 
 class JobRequest(BaseModel):
-    task_type: str
-    duration_seconds: int = 5
-    payload: dict = {}
+    task_type: str = Field(..., min_length=1, max_length=100, description="Task identifier or workload type")
+    duration_seconds: int = Field(default=5, ge=1, le=3600, description="Execution duration in seconds (1 to 3600)")
+    payload: dict = Field(default_factory=dict, description="Task payload parameters")
 
 @app.middleware("http")
 async def add_metrics_middleware(request, call_next):
