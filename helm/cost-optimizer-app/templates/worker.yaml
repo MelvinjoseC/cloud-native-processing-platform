@@ -11,6 +11,7 @@ metadata:
   namespace: {{ .Values.global.namespace | default .Release.Namespace }}
   labels:
     app: worker
+    {{- include "cost-optimizer-app.labels" . | nindent 4 }}
 spec:
   # Starts at 0, KEDA controls the replicas
   replicas: 0

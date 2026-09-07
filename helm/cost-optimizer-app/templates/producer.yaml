@@ -11,6 +11,7 @@ metadata:
   namespace: {{ .Values.global.namespace | default .Release.Namespace }}
   labels:
     app: producer
+    {{- include "cost-optimizer-app.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.producer.replicaCount }}
   selector:
