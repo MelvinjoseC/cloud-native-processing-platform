@@ -127,3 +127,73 @@ def test_sigterm_handler_idle():
         
         assert worker_app.shutdown_requested is True
         mock_exit.assert_called_once()
+        # Reset state for following tests
+        worker_app.shutdown_requested = False
+
+def test_process_message_cancelled_job():
+    mock_redis_client.reset_mock()
+    mock_pika_channel.reset_mock()
+    
+    task_payload = {
+        "job_id": "job-cancelled-123",
+        "task_type": "compress-video",
+        "duration_seconds": 10
+    }
+    body = json.dumps(task_payload).encode('utf-8')
+    
+    ch = MagicMock()
+    method = MagicMock()
+    method.delivery_tag = 77
+    properties = MagicMock()
+    properties.headers = None
+    
+    cancelled_job = {"job_id": "job-cancelled-123", "status": "CANCELLED"}
+    mock_redis_client.get.return_value = json.dumps(cancelled_job)
+    
+    with patch('worker_main.redis_client', mock_redis_client):
+        worker_app.process_message(ch, method, properties, body)
+        
+    ch.basic_ack.assert_called_once_with(delivery_tag=77)
+
+def test_process_message_dlq_routing():
+    mock_redis_client.reset_mock()
+    mock_pika_channel.reset_mock()
+    
+    body = b"poison-pill-data"
+    
+    ch = MagicMock()
+    method = MagicMock()
+    method.delivery_tag = 99
+    
+    properties = MagicMock()
+    properties.headers = {"x-retry-count": 3}
+    
+    with patch('worker_main.redis_client', mock_redis_client):
+        worker_app.process_message(ch, method, properties, body)
+        
+    ch.basic_publish.assert_called_once()
+    assert ch.basic_publish.call_args[1]["routing_key"] == "tasks_dlq"
+    ch.basic_ack.assert_called_once_with(delivery_tag=99)
+
+def test_archive_payload_to_s3():
+    mock_s3 = MagicMock()
+    task = {"job_id": "s3-job-1", "status": "COMPLETED"}
+    
+    with patch('worker_main.s3_client', mock_s3), \
+         patch('worker_main.S3_BUCKET', "my-test-bucket"):
+        worker_app.archive_payload_to_s3("s3-job-1", task)
+        mock_s3.put_object.assert_called_once_with(
+            Bucket="my-test-bucket",
+            Key="results/s3-job-1.json",
+            Body=json.dumps(task),
+            ContentType="application/json"
+        )
+
+def test_archive_payload_to_s3_disabled():
+    mock_s3 = MagicMock()
+    task = {"job_id": "s3-job-2", "status": "COMPLETED"}
+    
+    with patch('worker_main.s3_client', None), \
+         patch('worker_main.S3_BUCKET', None):
+        worker_app.archive_payload_to_s3("s3-job-2", task)
+        mock_s3.put_object.assert_not_called()
