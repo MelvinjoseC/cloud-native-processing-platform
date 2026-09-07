@@ -1,0 +1,19 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: rabbitmq-worker-scaler
+  namespace: processing-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: worker
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  cooldownPeriod: 60
+  triggers:
+    - type: rabbitmq
+      metadata:
+        queueName: tasks
+        value: "5"
+        host: amqp://guest:guest@rabbitmq.processing-platform.svc.cluster.local:5672//

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker-sa
+  namespace: processing-platform
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/cost-optimized-eks-worker-role"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: processing-platform
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          env:
+            - name: S3_BUCKET
+              value: "cost-optimized-eks-processed-payloads"
+            - name: AWS_REGION
+              value: "us-east-1"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
