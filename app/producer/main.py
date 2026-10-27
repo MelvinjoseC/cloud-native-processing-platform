@@ -227,6 +227,34 @@ class BatchJobRequest(BaseModel):
     )
 
 
+class JobSubmissionResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+class BatchJobSubmissionResponse(BaseModel):
+    submitted: int
+    jobs: List[JobSubmissionResponse]
+
+
+class JobListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    jobs: List[dict]
+
+
+class JobActionResponse(BaseModel):
+    job_id: str
+    status: str
+    message: str
+    retry_count: Optional[int] = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+
 @app.middleware("http")
 async def add_metrics_and_tracing_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
@@ -263,7 +291,13 @@ async def add_metrics_and_tracing_middleware(request: Request, call_next):
     return response
 
 
-@app.post("/api/v1/jobs", status_code=status.HTTP_202_ACCEPTED)
+@app.post(
+    "/api/v1/jobs",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobSubmissionResponse,
+    tags=["Jobs"],
+    summary="Submit an asynchronous job",
+)
 def submit_job(job: JobRequest, request: Request = None):
     request_id = getattr(getattr(request, "state", None), "request_id", None) or (
         request.headers.get("X-Request-ID")
@@ -322,7 +356,13 @@ def submit_job(job: JobRequest, request: Request = None):
     return {"job_id": job_id, "status": "PENDING"}
 
 
-@app.post("/api/v1/jobs/batch", status_code=status.HTTP_202_ACCEPTED)
+@app.post(
+    "/api/v1/jobs/batch",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=BatchJobSubmissionResponse,
+    tags=["Jobs"],
+    summary="Submit a batch of jobs",
+)
 def submit_jobs_batch(batch: BatchJobRequest, request: Request = None):
     request_id = getattr(getattr(request, "state", None), "request_id", None) or (
         request.headers.get("X-Request-ID")
@@ -400,7 +440,12 @@ def submit_jobs_batch(batch: BatchJobRequest, request: Request = None):
     return {"submitted": len(job_responses), "jobs": job_responses}
 
 
-@app.get("/api/v1/jobs")
+@app.get(
+    "/api/v1/jobs",
+    response_model=JobListResponse,
+    tags=["Jobs"],
+    summary="List cached jobs with filtering and pagination",
+)
 def list_jobs(
     status_filter: Optional[str] = Query(
         None,
@@ -447,7 +492,11 @@ def list_jobs(
     }
 
 
-@app.get("/api/v1/jobs/{job_id}")
+@app.get(
+    "/api/v1/jobs/{job_id}",
+    tags=["Jobs"],
+    summary="Retrieve specific job status and metadata",
+)
 def get_job_status(job_id: str):
     if not redis_client:
         raise HTTPException(
@@ -466,7 +515,12 @@ def get_job_status(job_id: str):
     return json.loads(data)
 
 
-@app.delete("/api/v1/jobs/{job_id}")
+@app.delete(
+    "/api/v1/jobs/{job_id}",
+    response_model=JobActionResponse,
+    tags=["Jobs"],
+    summary="Cancel or delete job",
+)
 def cancel_job(job_id: str):
     if not redis_client:
         raise HTTPException(
@@ -507,7 +561,13 @@ def cancel_job(job_id: str):
         }
 
 
-@app.post("/api/v1/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+@app.post(
+    "/api/v1/jobs/{job_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobActionResponse,
+    tags=["Jobs"],
+    summary="Retry a failed or cancelled job",
+)
 def retry_job(job_id: str):
     if not redis_client:
         raise HTTPException(
@@ -585,12 +645,22 @@ def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/healthz")
+@app.get(
+    "/healthz",
+    response_model=HealthResponse,
+    tags=["Health"],
+    summary="Liveness probe endpoint",
+)
 def healthz():
     return {"status": "healthy"}
 
 
-@app.get("/readyz")
+@app.get(
+    "/readyz",
+    response_model=HealthResponse,
+    tags=["Health"],
+    summary="Readiness probe endpoint",
+)
 def readyz():
     global redis_client
     # Verify connectivity to RabbitMQ
