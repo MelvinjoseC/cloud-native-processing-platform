@@ -55,21 +55,43 @@ REQUEST_LATENCY = Histogram(
 )
 JOBS_SUBMITTED = Counter("jobs_submitted_total", "Total jobs submitted to RabbitMQ")
 
-# Initialize Redis client (degrades gracefully if down)
+REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "20"))
+REDIS_SOCKET_TIMEOUT = float(os.getenv("REDIS_SOCKET_TIMEOUT", "3.0"))
+REDIS_RETRY_ON_TIMEOUT = os.getenv("REDIS_RETRY_ON_TIMEOUT", "true").lower() == "true"
+
+# Initialize Redis connection pool (degrades gracefully if down)
+redis_pool = None
 redis_client = None
-try:
-    redis_client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        password=REDIS_PASSWORD,
-        socket_timeout=3.0,
-        decode_responses=True,
-    )
-    redis_client.ping()
-    logger.info("Connected to Redis successfully.")
-except Exception as e:
-    logger.warning(f"Redis connection failed: {e}. Degrading to database-less mode.")
+
+
+def init_redis_client():
+    global redis_pool
+    try:
+        redis_pool = redis.ConnectionPool(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            db=REDIS_DB,
+            password=REDIS_PASSWORD,
+            max_connections=REDIS_MAX_CONNECTIONS,
+            socket_timeout=REDIS_SOCKET_TIMEOUT,
+            retry_on_timeout=REDIS_RETRY_ON_TIMEOUT,
+            health_check_interval=30,
+            decode_responses=True,
+        )
+        client = redis.Redis(connection_pool=redis_pool)
+        client.ping()
+        logger.info(
+            f"Connected to Redis connection pool (max={REDIS_MAX_CONNECTIONS}) successfully."
+        )
+        return client
+    except Exception as e:
+        logger.warning(
+            f"Redis connection pool init failed: {e}. Degrading to database-less mode."
+        )
+        return None
+
+
+redis_client = init_redis_client()
 
 
 # Pika connection helper
@@ -301,21 +323,8 @@ def readyz():
 
     # Verify or initialize connectivity to Redis
     if redis_client is None:
-        try:
-            redis_client = redis.Redis(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                db=REDIS_DB,
-                password=REDIS_PASSWORD,
-                socket_timeout=1.0,
-                decode_responses=True,
-            )
-            redis_client.ping()
-            logger.info(
-                "Re-initialized and connected to Redis successfully during readyz check."
-            )
-        except Exception as e:
-            logger.warning(f"Readyz check: Redis is still unreachable: {e}")
+        redis_client = init_redis_client()
+        if redis_client is None:
             raise HTTPException(status_code=503, detail="Redis cache not reachable")
     else:
         try:
