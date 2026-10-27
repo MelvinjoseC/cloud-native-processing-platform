@@ -96,6 +96,8 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 # S3 configurations for payload archival
 S3_BUCKET = os.getenv("S3_BUCKET", None)
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+S3_ARCHIVE_TAGS = os.getenv("S3_ARCHIVE_TAGS", None)
+S3_SSE_ALGORITHM = os.getenv("S3_SSE_ALGORITHM", None)
 
 s3_client = None
 if S3_BUCKET:
@@ -125,6 +127,10 @@ def archive_payload_to_s3(job_id: str, task: dict, request_id: str = None):
         }
         if request_id:
             put_kwargs["Metadata"] = {"job_id": job_id, "request_id": str(request_id)}
+        if S3_ARCHIVE_TAGS:
+            put_kwargs["Tagging"] = S3_ARCHIVE_TAGS
+        if S3_SSE_ALGORITHM:
+            put_kwargs["ServerSideEncryption"] = S3_SSE_ALGORITHM
         s3_client.put_object(**put_kwargs)
         logger.info(
             f"[{job_id}] Successfully archived payload to s3://{S3_BUCKET}/{s3_key}"
