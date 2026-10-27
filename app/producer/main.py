@@ -1,4 +1,5 @@
 import os
+import threading
 import uuid
 import json
 import logging
@@ -94,17 +95,67 @@ def init_redis_client():
 redis_client = init_redis_client()
 
 
-# Pika connection helper
-def get_rabbitmq_channel():
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-    connection = pika.BlockingConnection(
-        pika.ConnectionParameters(
-            host=RABBITMQ_HOST, credentials=credentials, socket_timeout=3.0
+# Thread-safe RabbitMQ connection and channel pooling
+class RabbitMQChannelPool:
+    def __init__(
+        self,
+        host=RABBITMQ_HOST,
+        user=RABBITMQ_USER,
+        password=RABBITMQ_PASS,
+        queue=RABBITMQ_QUEUE,
+    ):
+        self.host = host
+        self.user = user
+        self.password = password
+        self.queue = queue
+        self._lock = threading.Lock()
+        self._connection = None
+        self._channel = None
+
+    def _connect(self):
+        credentials = pika.PlainCredentials(self.user, self.password)
+        parameters = pika.ConnectionParameters(
+            host=self.host,
+            credentials=credentials,
+            socket_timeout=3.0,
+            heartbeat=600,
+            blocked_connection_timeout=300,
         )
-    )
-    channel = connection.channel()
-    channel.queue_declare(queue=RABBITMQ_QUEUE, durable=True)
-    return connection, channel
+        self._connection = pika.BlockingConnection(parameters)
+        self._channel = self._connection.channel()
+        self._channel.queue_declare(queue=self.queue, durable=True)
+
+    def get_channel(self):
+        with self._lock:
+            try:
+                if (
+                    self._connection is None
+                    or self._connection.is_closed
+                    or self._channel is None
+                    or self._channel.is_closed
+                ):
+                    self._connect()
+                return self._connection, self._channel
+            except Exception as e:
+                logger.warning(
+                    f"Failed to acquire pooled RabbitMQ channel: {e}, falling back to single-use connection."
+                )
+                credentials = pika.PlainCredentials(self.user, self.password)
+                conn = pika.BlockingConnection(
+                    pika.ConnectionParameters(
+                        host=self.host, credentials=credentials, socket_timeout=3.0
+                    )
+                )
+                ch = conn.channel()
+                ch.queue_declare(queue=self.queue, durable=True)
+                return conn, ch
+
+
+_rabbitmq_pool = RabbitMQChannelPool()
+
+
+def get_rabbitmq_channel():
+    return _rabbitmq_pool.get_channel()
 
 
 class JobRequest(BaseModel):
@@ -172,7 +223,8 @@ def submit_job(job: JobRequest):
             body=json.dumps(job_data),
             properties=pika.BasicProperties(delivery_mode=2),  # Make message persistent
         )
-        connection.close()
+        if connection != getattr(_rabbitmq_pool, "_connection", None):
+            connection.close()
         logger.info(f"Successfully published job {job_id} to queue.")
         JOBS_SUBMITTED.inc()
     except Exception as e:
@@ -316,7 +368,8 @@ def readyz():
                 host=RABBITMQ_HOST, credentials=credentials, socket_timeout=1.0
             )
         )
-        connection.close()
+        if connection != getattr(_rabbitmq_pool, "_connection", None):
+            connection.close()
     except Exception as e:
         logger.error(f"Readyz check failed (RabbitMQ offline): {e}")
         raise HTTPException(status_code=503, detail="RabbitMQ not reachable")
