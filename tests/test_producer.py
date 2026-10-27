@@ -249,3 +249,97 @@ def test_list_jobs_filtered():
         data = response.json()
         assert data["total"] == 1
         assert data["jobs"][0]["job_id"] == "1"
+
+
+def test_submit_jobs_batch_success():
+    mock_redis_client.reset_mock()
+    mock_pika_channel.reset_mock()
+    mock_pika_channel.basic_publish.side_effect = None
+    mock_pipeline = MagicMock()
+    mock_redis_client.pipeline.return_value = mock_pipeline
+
+    batch_payload = {
+        "jobs": [
+            {"task_type": "resize-image", "duration_seconds": 2, "priority": 7},
+            {"task_type": "data_processing", "duration_seconds": 4, "priority": 3},
+        ]
+    }
+
+    with patch("producer_main.redis_client", mock_redis_client), patch(
+        "producer_main.get_rabbitmq_channel",
+        return_value=(mock_pika_connection, mock_pika_channel),
+    ):
+        response = client.post("/api/v1/jobs/batch", json=batch_payload)
+        assert response.status_code == 202
+        data = response.json()
+        assert data["submitted"] == 2
+        assert len(data["jobs"]) == 2
+        assert mock_pika_channel.basic_publish.call_count == 2
+        mock_pipeline.execute.assert_called_once()
+
+
+def test_retry_job_success():
+    mock_redis_client.reset_mock()
+    mock_pika_channel.reset_mock()
+    mock_pika_channel.basic_publish.side_effect = None
+    mock_redis_client.get.side_effect = None
+    job_id = "test-job-retry"
+    failed_job = {
+        "job_id": job_id,
+        "task_type": "data_processing",
+        "status": "FAILED",
+        "error": "Timeout occurred",
+        "retry_count": 1,
+    }
+    mock_redis_client.get.return_value = json.dumps(failed_job)
+
+    with patch("producer_main.redis_client", mock_redis_client), patch(
+        "producer_main.get_rabbitmq_channel",
+        return_value=(mock_pika_connection, mock_pika_channel),
+    ):
+        response = client.post(f"/api/v1/jobs/{job_id}/retry")
+        assert response.status_code == 202
+        data = response.json()
+        assert data["job_id"] == job_id
+        assert data["status"] == "PENDING"
+        assert data["retry_count"] == 2
+        mock_pika_channel.basic_publish.assert_called_once()
+
+
+def test_retry_job_invalid_status():
+    mock_redis_client.reset_mock()
+    job_id = "test-job-running"
+    running_job = {
+        "job_id": job_id,
+        "task_type": "data_processing",
+        "status": "PROCESSING",
+    }
+    mock_redis_client.get.return_value = json.dumps(running_job)
+
+    with patch("producer_main.redis_client", mock_redis_client):
+        response = client.post(f"/api/v1/jobs/{job_id}/retry")
+        assert response.status_code == 400
+        assert (
+            "Only FAILED or CANCELLED jobs can be retried" in response.json()["detail"]
+        )
+
+
+def test_request_id_tracing_header():
+    mock_redis_client.reset_mock()
+    mock_pika_channel.reset_mock()
+    mock_pika_channel.basic_publish.side_effect = None
+
+    job_payload = {"task_type": "data_processing", "duration_seconds": 1}
+    custom_trace_id = "trace-custom-uuid-999"
+
+    with patch("producer_main.redis_client", mock_redis_client), patch(
+        "producer_main.get_rabbitmq_channel",
+        return_value=(mock_pika_connection, mock_pika_channel),
+    ):
+        response = client.post(
+            "/api/v1/jobs",
+            json=job_payload,
+            headers={"X-Request-ID": custom_trace_id},
+        )
+        assert response.status_code == 202
+        assert response.headers.get("X-Request-ID") == custom_trace_id

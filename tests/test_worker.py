@@ -208,3 +208,59 @@ def test_archive_payload_to_s3_disabled():
     with patch("worker_main.s3_client", None), patch("worker_main.S3_BUCKET", None):
         worker_app.archive_payload_to_s3("s3-job-2", task)
         mock_s3.put_object.assert_not_called()
+
+
+def test_worker_task_dispatcher_dispatch():
+    mock_redis_client.reset_mock()
+    mock_redis_client.get.return_value = None
+    mock_redis_client.get.side_effect = None
+    ch = MagicMock()
+    method = MagicMock()
+    method.delivery_tag = 10
+    properties = MagicMock()
+    properties.correlation_id = "corr-10"
+    properties.headers = {"x-request-id": "req-10"}
+
+    task_payload = {
+        "job_id": "dispatch-job-1",
+        "task_type": "image_resize",
+        "duration_seconds": 1,
+        "payload": {"width": 1920, "height": 1080},
+    }
+    body = json.dumps(task_payload).encode("utf-8")
+
+    with patch("worker_main.redis_client", mock_redis_client), patch("time.sleep"):
+        worker_app.process_message(ch, method, properties, body)
+
+    ch.basic_ack.assert_called_once_with(delivery_tag=10)
+    args, kwargs = mock_redis_client.set.call_args
+    completed_task = json.loads(args[1])
+    assert completed_task["status"] == "COMPLETED"
+    assert completed_task["result"]["target_resolution"] == "1920x1080"
+
+
+def test_worker_task_timeout():
+    mock_redis_client.reset_mock()
+    mock_redis_client.get.return_value = None
+    mock_redis_client.get.side_effect = None
+    ch = MagicMock()
+    method = MagicMock()
+    method.delivery_tag = 20
+    properties = MagicMock()
+    properties.correlation_id = "corr-20"
+    properties.headers = {}
+
+    task_payload = {
+        "job_id": "timeout-job-1",
+        "task_type": "heavy_job",
+        "duration_seconds": 500,
+        "timeout_seconds": 10,
+    }
+    body = json.dumps(task_payload).encode("utf-8")
+
+    with patch("worker_main.redis_client", mock_redis_client), patch(
+        "worker_main.TASK_MAX_TIMEOUT_SECONDS", 10
+    ):
+        worker_app.process_message(ch, method, properties, body)
+
+    ch.basic_nack.assert_called_once_with(delivery_tag=20, requeue=True)
