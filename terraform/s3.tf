@@ -37,3 +37,34 @@ resource "aws_s3_bucket_versioning" "payloads" {
     status = "Enabled"
   }
 }
+
+# S3 Lifecycle Configuration for cost-effective tiered storage and archival
+resource "aws_s3_bucket_lifecycle_configuration" "payloads" {
+  bucket = aws_s3_bucket.payloads.id
+
+  rule {
+    id     = "archive-and-expire-payloads"
+    status = "Enabled"
+
+    filter {
+      prefix = "results/"
+    }
+
+    transition {
+      days          = 90
+      storage_class = "GLACIER"
+    }
+
+    expiration {
+      days = 365
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
