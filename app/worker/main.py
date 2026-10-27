@@ -194,6 +194,45 @@ class TaskTimeoutException(Exception):
     pass
 
 
+# Task dispatcher registry
+TASK_HANDLERS = {}
+
+
+def register_handler(task_type: str):
+    def decorator(func):
+        TASK_HANDLERS[task_type] = func
+        return func
+
+    return decorator
+
+
+@register_handler("data_processing")
+def handle_data_processing(payload: dict) -> dict:
+    records = payload.get("records", [])
+    return {
+        "processed_count": len(records) if isinstance(records, list) else 1,
+        "checksum": hex(hash(str(payload)) & 0xFFFFFFFF),
+    }
+
+
+@register_handler("image_resize")
+@register_handler("resize-image")
+def handle_image_resize(payload: dict) -> dict:
+    width = payload.get("width", 800)
+    height = payload.get("height", 600)
+    return {"target_resolution": f"{width}x{height}", "format": "webp"}
+
+
+@register_handler("report_generation")
+def handle_report_generation(payload: dict) -> dict:
+    report_type = payload.get("report_type", "summary")
+    return {"report_type": report_type, "sections": ["summary", "metrics"]}
+
+
+def handle_generic_task(payload: dict) -> dict:
+    return {"status": "ok", "keys_processed": len(payload)}
+
+
 def process_message(ch, method, properties, body):
     global processing_active, shutdown_requested
     processing_active = True
@@ -284,7 +323,10 @@ def process_message(ch, method, properties, body):
                 )
             time.sleep(1)
 
-        logger.info(f"[{job_id}] Finished task successfully.")
+        handler = TASK_HANDLERS.get(task_type, handle_generic_task)
+        task_result = handler(task.get("payload", {}))
+        task["result"] = task_result
+        logger.info(f"[{job_id}] Finished task '{task_type}' successfully.")
 
         # 3. Update status to COMPLETED in Redis
         if redis_client:
