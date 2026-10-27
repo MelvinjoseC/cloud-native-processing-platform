@@ -4,7 +4,7 @@ import uuid
 import json
 import logging
 import time
-from typing import Optional
+from typing import Optional, List
 from fastapi import FastAPI, HTTPException, status, Response, Query, Request
 from pydantic import BaseModel, Field
 import redis
@@ -174,6 +174,15 @@ class JobRequest(BaseModel):
     payload: dict = Field(default_factory=dict, description="Task payload parameters")
 
 
+class BatchJobRequest(BaseModel):
+    jobs: List[JobRequest] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="List of job requests to submit in batch (1-100)",
+    )
+
+
 @app.middleware("http")
 async def add_metrics_and_tracing_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
@@ -252,6 +261,82 @@ def submit_job(job: JobRequest, request: Request = None):
         )
 
     return {"job_id": job_id, "status": "PENDING"}
+
+
+@app.post("/api/v1/jobs/batch", status_code=status.HTTP_202_ACCEPTED)
+def submit_jobs_batch(batch: BatchJobRequest, request: Request = None):
+    request_id = getattr(getattr(request, "state", None), "request_id", None) or (
+        request.headers.get("X-Request-ID")
+        if request and hasattr(request, "headers")
+        else str(uuid.uuid4())
+    )
+
+    prepared_jobs = []
+    job_responses = []
+
+    for item in batch.jobs:
+        job_id = str(uuid.uuid4())
+        job_data = {
+            "job_id": job_id,
+            "task_type": item.task_type,
+            "duration_seconds": item.duration_seconds,
+            "payload": item.payload,
+            "status": "PENDING",
+            "created_at": time.time(),
+            "request_id": request_id,
+        }
+        prepared_jobs.append(job_data)
+        job_responses.append({"job_id": job_id, "status": "PENDING"})
+
+    # 1. Pipeline caching in Redis
+    if redis_client:
+        try:
+            pipe = redis_client.pipeline()
+            for job_data in prepared_jobs:
+                pipe.set(f"job:{job_data['job_id']}", json.dumps(job_data), ex=3600)
+            pipe.execute()
+        except Exception as e:
+            logger.error(f"Failed to cache batch jobs in Redis pipeline: {e}")
+
+    # 2. Publish batch to RabbitMQ
+    try:
+        connection, channel = get_rabbitmq_channel()
+        for job_data in prepared_jobs:
+            channel.basic_publish(
+                exchange="",
+                routing_key=RABBITMQ_QUEUE,
+                body=json.dumps(job_data),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,
+                    correlation_id=job_data["job_id"],
+                    headers={"x-request-id": request_id},
+                ),
+            )
+        if connection != getattr(_rabbitmq_pool, "_connection", None):
+            connection.close()
+        logger.info(
+            f"Successfully published batch of {len(prepared_jobs)} jobs to queue."
+        )
+        JOBS_SUBMITTED.inc(len(prepared_jobs))
+    except Exception as e:
+        logger.critical(f"Failed to publish batch to RabbitMQ: {e}")
+        if redis_client:
+            try:
+                pipe = redis_client.pipeline()
+                for job_data in prepared_jobs:
+                    job_data["status"] = "FAILED"
+                    pipe.set(f"job:{job_data['job_id']}", json.dumps(job_data), ex=3600)
+                pipe.execute()
+            except Exception as pipe_err:
+                logger.error(
+                    f"Failed to update redis batch status to FAILED: {pipe_err}"
+                )
+        raise HTTPException(
+            status_code=503,
+            detail="Task queue unavailable. Failed to submit batch.",
+        )
+
+    return {"submitted": len(job_responses), "jobs": job_responses}
 
 
 @app.get("/api/v1/jobs")
