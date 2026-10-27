@@ -32,6 +32,12 @@ WORKER_JOB_DURATION_SECONDS = Histogram(
 WORKER_ACTIVE_JOBS = Gauge(
     "worker_active_jobs", "Current active jobs being processed by worker"
 )
+WORKER_TASK_TIMEOUTS_TOTAL = Counter(
+    "worker_task_timeouts_total",
+    "Total tasks that timed out during execution",
+    ["task_type"],
+)
+TASK_MAX_TIMEOUT_SECONDS = int(os.getenv("TASK_MAX_TIMEOUT_SECONDS", "3600"))
 
 
 # Logging setup with thread-local correlation context
@@ -182,6 +188,12 @@ class ShutdownAbortedException(Exception):
     pass
 
 
+class TaskTimeoutException(Exception):
+    """Exception raised when task exceeds execution timeout deadline."""
+
+    pass
+
+
 def process_message(ch, method, properties, body):
     global processing_active, shutdown_requested
     processing_active = True
@@ -249,11 +261,26 @@ def process_message(ch, method, properties, body):
             except Exception as e:
                 logger.error(f"Failed to update redis: {e}")
 
+        task_timeout = min(
+            task.get("timeout_seconds", TASK_MAX_TIMEOUT_SECONDS),
+            TASK_MAX_TIMEOUT_SECONDS,
+        )
+        if duration > task_timeout:
+            WORKER_TASK_TIMEOUTS_TOTAL.labels(task_type=task_type).inc()
+            raise TaskTimeoutException(
+                f"Configured task duration {duration}s exceeds maximum allowed timeout {task_timeout}s"
+            )
+
         # 2. Simulate CPU-heavy or network-bound processing
         for elapsed in range(duration):
             if shutdown_requested:
                 raise ShutdownAbortedException(
                     "Graceful shutdown initiated during task execution."
+                )
+            if elapsed >= task_timeout:
+                WORKER_TASK_TIMEOUTS_TOTAL.labels(task_type=task_type).inc()
+                raise TaskTimeoutException(
+                    f"Task execution timed out after {elapsed}s (limit: {task_timeout}s)"
                 )
             time.sleep(1)
 
