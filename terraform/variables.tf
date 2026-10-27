@@ -15,3 +15,15 @@ variable "vpc_cidr" {
   type        = string
   default     = "10.0.0.0/16"
 }
+
+variable "monthly_budget_limit" {
+  description = "Monthly budget limit in USD for platform cost guardrails"
+  type        = string
+  default     = "50"
+}
+
+variable "alert_email" {
+  description = "Email recipient for AWS Budget cost alert notifications"
+  type        = string
+  default     = "platform-alerts@example.com"
+}
