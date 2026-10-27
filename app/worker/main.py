@@ -1,3 +1,4 @@
+import threading
 import os
 import sys
 import time
@@ -26,7 +27,17 @@ WORKER_ACTIVE_JOBS = Gauge(
 )
 
 
-# Logging setup
+# Logging setup with thread-local correlation context
+log_context = threading.local()
+
+
+class ContextLogFilter(logging.Filter):
+    def filter(self, record):
+        record.correlation_id = getattr(log_context, "correlation_id", "none")
+        record.request_id = getattr(log_context, "request_id", "none")
+        return True
+
+
 class JSONFormatter(logging.Formatter):
     def format(self, record):
         log_record = {
@@ -35,6 +46,10 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
             "logger": record.name,
         }
+        if hasattr(record, "correlation_id") and record.correlation_id != "none":
+            log_record["correlation_id"] = record.correlation_id
+        if hasattr(record, "request_id") and record.request_id != "none":
+            log_record["request_id"] = record.request_id
         if record.exc_info:
             log_record["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_record)
@@ -42,6 +57,7 @@ class JSONFormatter(logging.Formatter):
 
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(JSONFormatter())
+handler.addFilter(ContextLogFilter())
 logger = logging.getLogger("worker")
 logger.setLevel(logging.INFO)
 logger.addHandler(handler)
@@ -78,17 +94,20 @@ if S3_BUCKET:
         )
 
 
-def archive_payload_to_s3(job_id: str, task: dict):
+def archive_payload_to_s3(job_id: str, task: dict, request_id: str = None):
     if not s3_client or not S3_BUCKET:
         return
     try:
         s3_key = f"results/{job_id}.json"
-        s3_client.put_object(
-            Bucket=S3_BUCKET,
-            Key=s3_key,
-            Body=json.dumps(task),
-            ContentType="application/json",
-        )
+        put_kwargs = {
+            "Bucket": S3_BUCKET,
+            "Key": s3_key,
+            "Body": json.dumps(task),
+            "ContentType": "application/json",
+        }
+        if request_id:
+            put_kwargs["Metadata"] = {"job_id": job_id, "request_id": str(request_id)}
+        s3_client.put_object(**put_kwargs)
         logger.info(
             f"[{job_id}] Successfully archived payload to s3://{S3_BUCKET}/{s3_key}"
         )
@@ -165,11 +184,30 @@ def process_message(ch, method, properties, body):
     task = {}
     job_id = "unknown"
     task_type = "unknown"
+    headers = (
+        properties.headers
+        if (
+            properties
+            and hasattr(properties, "headers")
+            and isinstance(properties.headers, dict)
+        )
+        else {}
+    )
+    correlation_id = getattr(properties, "correlation_id", None) or "unknown"
+    request_id = headers.get("x-request-id") or "unknown"
+
     try:
         task = json.loads(body.decode("utf-8"))
-        job_id = task.get("job_id", "unknown")
+        job_id = task.get(
+            "job_id", correlation_id if correlation_id != "unknown" else "unknown"
+        )
         task_type = task.get("task_type", "unknown")
         duration = task.get("duration_seconds", 5)
+        if request_id == "unknown":
+            request_id = task.get("request_id", "unknown")
+
+        log_context.correlation_id = job_id
+        log_context.request_id = request_id
 
         logger.info(
             f"[{job_id}] Received task '{task_type}' (Simulated work: {duration}s)"
@@ -224,7 +262,7 @@ def process_message(ch, method, properties, body):
                 logger.error(f"Failed to update redis: {e}")
 
         # 4. Archive payload to S3 if configured
-        archive_payload_to_s3(job_id, task)
+        archive_payload_to_s3(job_id, task, request_id=request_id)
 
         # 5. Record completion metrics
         WORKER_JOBS_PROCESSED_TOTAL.labels(
@@ -313,6 +351,8 @@ def process_message(ch, method, properties, body):
                 logger.error(f"Nack failed: {nack_err}")
 
     finally:
+        log_context.correlation_id = "none"
+        log_context.request_id = "none"
         processing_active = False
         WORKER_ACTIVE_JOBS.dec()
         if shutdown_requested:
