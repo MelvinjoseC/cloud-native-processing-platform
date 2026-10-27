@@ -81,6 +81,11 @@ RABBITMQ_USER = os.getenv("RABBITMQ_USER", "guest")
 RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "guest")
 RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "tasks")
 RABBITMQ_DLQ = os.getenv("RABBITMQ_DLQ", "tasks_dlq")
+RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBITMQ_HEARTBEAT = int(os.getenv("RABBITMQ_HEARTBEAT", "600"))
+RABBITMQ_BLOCKED_TIMEOUT = int(os.getenv("RABBITMQ_BLOCKED_TIMEOUT", "300"))
+RABBITMQ_SOCKET_TIMEOUT = float(os.getenv("RABBITMQ_SOCKET_TIMEOUT", "10.0"))
+PREFETCH_COUNT = int(os.getenv("PREFETCH_COUNT", "1"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -500,9 +505,11 @@ def start_worker():
     credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
     parameters = pika.ConnectionParameters(
         host=RABBITMQ_HOST,
+        port=RABBITMQ_PORT,
         credentials=credentials,
-        heartbeat=600,
-        blocked_connection_timeout=300,
+        socket_timeout=RABBITMQ_SOCKET_TIMEOUT,
+        heartbeat=RABBITMQ_HEARTBEAT,
+        blocked_connection_timeout=RABBITMQ_BLOCKED_TIMEOUT,
     )
 
     base_delay = 2.0
@@ -522,8 +529,8 @@ def start_worker():
             current_channel.queue_declare(queue=RABBITMQ_QUEUE, durable=True)
             current_channel.queue_declare(queue=RABBITMQ_DLQ, durable=True)
 
-            # Prefetch count = 1 to distribute load evenly among workers
-            current_channel.basic_qos(prefetch_count=1)
+            # Distribute load according to configurable prefetch count
+            current_channel.basic_qos(prefetch_count=PREFETCH_COUNT)
 
             current_channel.basic_consume(
                 queue=RABBITMQ_QUEUE, on_message_callback=process_message
