@@ -47,6 +47,44 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB = int(os.getenv("REDIS_DB", 0))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
+# Rate limiter configuration
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "false").lower() == "true"
+RATE_LIMIT_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "100"))
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+_in_memory_rate_limits = {}
+_rate_limit_lock = threading.Lock()
+
+
+def is_rate_limited(client_ip: str) -> bool:
+    if not RATE_LIMIT_ENABLED:
+        return False
+
+    current_ts = time.time()
+    window_start = current_ts - RATE_LIMIT_WINDOW_SECONDS
+
+    if redis_client:
+        try:
+            key = f"rate_limit:{client_ip}"
+            pipe = redis_client.pipeline()
+            pipe.zremrangebyscore(key, 0, window_start)
+            pipe.zadd(key, {str(current_ts): current_ts})
+            pipe.zcard(key)
+            pipe.expire(key, RATE_LIMIT_WINDOW_SECONDS)
+            results = pipe.execute()
+            req_count = results[2]
+            return req_count > RATE_LIMIT_MAX_REQUESTS
+        except Exception as e:
+            logger.warning(f"Redis rate limiter fallback to in-memory: {e}")
+
+    with _rate_limit_lock:
+        timestamps = _in_memory_rate_limits.setdefault(client_ip, [])
+        _in_memory_rate_limits[client_ip] = [
+            ts for ts in timestamps if ts > window_start
+        ]
+        _in_memory_rate_limits[client_ip].append(current_ts)
+        return len(_in_memory_rate_limits[client_ip]) > RATE_LIMIT_MAX_REQUESTS
+
+
 # Prometheus metrics
 HTTP_REQUESTS_TOTAL = Counter(
     "http_requests_total", "Total HTTP Requests", ["method", "endpoint", "status"]
@@ -198,8 +236,21 @@ async def add_metrics_and_tracing_middleware(request: Request, call_next):
     response = await call_next(request)
     duration = time.time() - start_time
 
-    response.headers["X-Request-ID"] = request_id
     endpoint = request.url.path
+    if endpoint not in ["/metrics", "/healthz", "/readyz"]:
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        if is_rate_limited(client_ip):
+            detail_msg = (
+                f"Rate limit exceeded. Maximum {RATE_LIMIT_MAX_REQUESTS} "
+                f"requests per {RATE_LIMIT_WINDOW_SECONDS} seconds."
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=detail_msg,
+                headers={"Retry-After": str(RATE_LIMIT_WINDOW_SECONDS)},
+            )
+
+    response.headers["X-Request-ID"] = request_id
     # Exclude metrics and health check from latency graphs to avoid noise
     if endpoint not in ["/metrics", "/healthz", "/readyz"]:
         HTTP_REQUESTS_TOTAL.labels(
