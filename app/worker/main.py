@@ -7,7 +7,14 @@ import logging
 import signal
 import redis
 import pika
-from prometheus_client import Counter, Histogram, Gauge, start_http_server
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from prometheus_client import (
+    Counter,
+    Histogram,
+    Gauge,
+    generate_latest,
+    CONTENT_TYPE_LATEST,
+)
 
 METRICS_PORT = int(os.getenv("METRICS_PORT", "9102"))
 
@@ -362,6 +369,61 @@ def process_message(ch, method, properties, body):
             cleanup_and_exit()
 
 
+class WorkerHttpHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/metrics":
+            data = generate_latest()
+            self.send_response(200)
+            self.send_header("Content-Type", CONTENT_TYPE_LATEST)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path == "/healthz":
+            if shutdown_requested:
+                self.send_response(503)
+                self.end_headers()
+                self.wfile.write(b'{"status": "shutting_down"}\n')
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "healthy"}\n')
+        elif self.path == "/readyz":
+            if (
+                shutdown_requested
+                or current_connection is None
+                or not getattr(current_connection, "is_open", False)
+            ):
+                self.send_response(503)
+                self.end_headers()
+                self.wfile.write(b'{"status": "not_ready"}\n')
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ready"}\n')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass
+
+
+def start_worker_http_server(port=METRICS_PORT):
+    try:
+        server = HTTPServer(("0.0.0.0", port), WorkerHttpHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        logger.info(
+            f"Worker HTTP telemetry server started on port {port} (/metrics, /healthz, /readyz)."
+        )
+        return server
+    except Exception as err:
+        logger.warning(f"Could not start HTTP telemetry server on port {port}: {err}")
+        return None
+
+
 def start_worker():
     global current_connection, current_channel
     import random
@@ -378,14 +440,8 @@ def start_worker():
     max_delay = 60.0
     retry_delay = base_delay
 
-    # Start Prometheus metrics server
-    try:
-        start_http_server(METRICS_PORT)
-        logger.info(f"Prometheus metrics server started on port {METRICS_PORT}.")
-    except Exception as metrics_err:
-        logger.warning(
-            f"Could not start metrics server on port {METRICS_PORT}: {metrics_err}"
-        )
+    # Start HTTP telemetry and health server
+    start_worker_http_server(METRICS_PORT)
 
     while not shutdown_requested:
         try:
