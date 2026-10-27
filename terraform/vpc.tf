@@ -23,7 +23,7 @@ resource "aws_vpc" "eks_vpc" {
   enable_dns_support   = true
 
   tags = merge(local.common_tags, {
-    Name                                      = "${var.cluster_name}-vpc"
+    Name                                        = "${var.cluster_name}-vpc"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   })
 }
@@ -46,9 +46,9 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name                                      = "${var.cluster_name}-public-${count.index}"
+    Name                                        = "${var.cluster_name}-public-${count.index}"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
-    "kubernetes.io/role/elb"                  = "1"
+    "kubernetes.io/role/elb"                    = "1"
   })
 }
 
@@ -59,9 +59,9 @@ resource "aws_subnet" "private" {
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = merge(local.common_tags, {
-    Name                                      = "${var.cluster_name}-private-${count.index}"
+    Name                                        = "${var.cluster_name}-private-${count.index}"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"         = "1"
+    "kubernetes.io/role/internal-elb"           = "1"
   })
 }
 

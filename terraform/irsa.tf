@@ -87,7 +87,7 @@ resource "aws_iam_policy" "worker_s3_access" {
           "s3:GetObject",
           "s3:ListBucket"
         ]
-        Effect   = "Allow"
+        Effect = "Allow"
         Resource = [
           "arn:aws:s3:::${var.cluster_name}-processed-payloads",
           "arn:aws:s3:::${var.cluster_name}-processed-payloads/*"

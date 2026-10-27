@@ -78,16 +78,16 @@ resource "aws_iam_role_policy_attachment" "ec2_registry" {
   role       = aws_iam_role.eks_nodes.name
 }
 
-# 4. Managed Node Group - Cost-Optimized Spot Instances
-resource "aws_eks_node_group" "spot_nodes" {
+# 4. System Node Group - Reliable On-Demand for Core Stateful Stack & Control
+resource "aws_eks_node_group" "system_nodes" {
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "${var.cluster_name}-spot-group"
+  node_group_name = "${var.cluster_name}-system-group"
   node_role_arn   = aws_iam_role.eks_nodes.arn
   subnet_ids      = aws_subnet.private[*].id
 
   scaling_config {
     desired_size = 2
-    max_size     = 5
+    max_size     = 3
     min_size     = 1
   }
 
@@ -96,11 +96,50 @@ resource "aws_eks_node_group" "spot_nodes" {
   }
 
   instance_types = ["t3.medium"]
-  capacity_type  = "SPOT" # Cost-optimization: Spot instances save up to 90% compared to on-demand
+  capacity_type  = "ON_DEMAND"
+
+  labels = {
+    lifecycle = "on-demand"
+    intent    = "system"
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_worker_node,
+    aws_iam_role_policy_attachment.eks_cni,
+    aws_iam_role_policy_attachment.ec2_registry,
+  ]
+}
+
+# 5. Worker Node Group - Scale-to-Zero Spot Instances for Asynchronous Workloads
+resource "aws_eks_node_group" "spot_nodes" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.cluster_name}-spot-worker-group"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  subnet_ids      = aws_subnet.private[*].id
+
+  scaling_config {
+    desired_size = 1
+    max_size     = 10
+    min_size     = 0 # True scale-to-zero compute pool when queue is idle
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  # Multi-instance type diversification to mitigate spot interruption rates
+  instance_types = ["t3.medium", "t3a.medium", "c5.large"]
+  capacity_type  = "SPOT"
 
   labels = {
     lifecycle = "spot"
-    intent    = "apps"
+    intent    = "workers"
+  }
+
+  taint {
+    key    = "workload"
+    value  = "worker"
+    effect = "PREFER_NO_SCHEDULE"
   }
 
   depends_on = [
@@ -157,7 +196,7 @@ resource "aws_eks_addon" "vpc_cni" {
 resource "aws_eks_addon" "coredns" {
   cluster_name = aws_eks_cluster.main.name
   addon_name   = "coredns"
-  depends_on   = [aws_eks_node_group.spot_nodes] # CoreDNS pods need nodes to run
+  depends_on   = [aws_eks_node_group.system_nodes] # CoreDNS pods run on reliable on-demand system nodes
 }
 
 resource "aws_eks_addon" "kube_proxy" {
