@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from typing import Optional
-from fastapi import FastAPI, HTTPException, status, Response, Query
+from fastapi import FastAPI, HTTPException, status, Response, Query, Request
 from pydantic import BaseModel, Field
 import redis
 import pika
@@ -175,11 +175,15 @@ class JobRequest(BaseModel):
 
 
 @app.middleware("http")
-async def add_metrics_middleware(request, call_next):
+async def add_metrics_and_tracing_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+
     start_time = time.time()
     response = await call_next(request)
     duration = time.time() - start_time
 
+    response.headers["X-Request-ID"] = request_id
     endpoint = request.url.path
     # Exclude metrics and health check from latency graphs to avoid noise
     if endpoint not in ["/metrics", "/healthz", "/readyz"]:
@@ -194,7 +198,12 @@ async def add_metrics_middleware(request, call_next):
 
 
 @app.post("/api/v1/jobs", status_code=status.HTTP_202_ACCEPTED)
-def submit_job(job: JobRequest):
+def submit_job(job: JobRequest, request: Request = None):
+    request_id = getattr(getattr(request, "state", None), "request_id", None) or (
+        request.headers.get("X-Request-ID")
+        if request and hasattr(request, "headers")
+        else str(uuid.uuid4())
+    )
     job_id = str(uuid.uuid4())
     job_data = {
         "job_id": job_id,
@@ -203,6 +212,7 @@ def submit_job(job: JobRequest):
         "payload": job.payload,
         "status": "PENDING",
         "created_at": time.time(),
+        "request_id": request_id,
     }
 
     # 1. Save state in Redis (graceful degradation)
@@ -221,7 +231,11 @@ def submit_job(job: JobRequest):
             exchange="",
             routing_key=RABBITMQ_QUEUE,
             body=json.dumps(job_data),
-            properties=pika.BasicProperties(delivery_mode=2),  # Make message persistent
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                correlation_id=job_id,
+                headers={"x-request-id": request_id},
+            ),
         )
         if connection != getattr(_rabbitmq_pool, "_connection", None):
             connection.close()
