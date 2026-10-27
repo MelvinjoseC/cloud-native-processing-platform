@@ -72,10 +72,18 @@ spec:
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
           livenessProbe:
-            exec:
-              command:
-                - pgrep
-                - -f
-                - main.py
+            httpGet:
+              path: /healthz
+              port: 9102
             initialDelaySeconds: 10
             periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9102
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
