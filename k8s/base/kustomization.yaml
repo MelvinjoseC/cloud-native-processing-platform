@@ -11,3 +11,4 @@ resources:
   - worker.yaml
   - pdb.yaml
   - networkpolicy.yaml
+  - ingress.yaml
