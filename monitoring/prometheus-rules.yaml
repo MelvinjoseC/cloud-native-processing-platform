@@ -71,3 +71,29 @@ spec:
           annotations:
             summary: "High worker job failure rate detected"
             description: "Over 10% of worker tasks are failing and being routed to DLQ in the last 5 minutes."
+        - alert: WorkerStarvationQueueBacklogged
+          expr: rabbitmq_queue_messages{queue="tasks"} > 10 and on() (kube_deployment_status_replicas{deployment="worker"} == 0)
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Worker starvation: tasks backlogged while worker replicas is 0"
+            description: "The queue 'tasks' has pending work but no worker replicas are active. Verify KEDA controller status."
+
+        - alert: WorkerExecutionTimeoutsHigh
+          expr: sum(rate(worker_task_timeouts_total[5m])) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Elevated worker task execution timeouts"
+            description: "Worker tasks are frequently exceeding execution deadlines and being terminated by the watchdog."
+
+        - alert: ProducerRateLimitSpike
+          expr: sum(rate(http_requests_total{status="429"}[5m])) > 1
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Spike in client rate limit (HTTP 429) rejections"
+            description: "API producer is shedding load due to rate limiting. Check client submission patterns."
