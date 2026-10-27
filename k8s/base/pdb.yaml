@@ -19,3 +19,14 @@ spec:
   selector:
     matchLabels:
       app: rabbitmq
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: processing-platform
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: redis
