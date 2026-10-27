@@ -30,7 +30,7 @@ spec:
         prometheus.io/port: "9102"
     spec:
       serviceAccountName: worker-sa
-      terminationGracePeriodSeconds: 60  # Allows active tasks to complete within 60s when scaling down
+      terminationGracePeriodSeconds: 120  # Matches AWS EC2 Spot 2-minute interruption window for task drainage
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
