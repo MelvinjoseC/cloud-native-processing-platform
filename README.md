@@ -5,12 +5,13 @@
 ![AWS EKS](https://img.shields.io/badge/Kubernetes-EKS-orange)
 ![ArgoCD](https://img.shields.io/badge/GitOps-ArgoCD-blue)
 ![KEDA](https://img.shields.io/badge/Scaling-KEDA-green)
+![FinOps](https://img.shields.io/badge/FinOps-Scale--to--Zero-success)
 
-A production-grade, enterprise-scale microservice platform demonstrating dynamic load handling, cost optimization, GitOps, and robust resilience architectures. This project showcases how to combine AWS EKS, KEDA (Kubernetes Event-driven Autoscaling), ArgoCD, and automated Chaos testing to deploy a self-healing, cost-efficient processing queue.
+A production-grade, enterprise-scale distributed processing platform demonstrating dynamic load handling, scale-to-zero FinOps cost optimization, GitOps, and robust resilience architectures. Built using AWS EKS, KEDA (Kubernetes Event-driven Autoscaling), RabbitMQ, Redis, ArgoCD, and automated Chaos testing to deploy a high-throughput, self-healing processing queue.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
 ```
                                     ┌─────────────────────┐
@@ -20,10 +21,10 @@ A production-grade, enterprise-scale microservice platform demonstrating dynamic
                                                ▼
   ┌────────────────────────────────────────────EKS Cluster (VPC)─────────────────────────────────────────────┐
   │                                                                                                          │
-  │     Client/HTTP           ┌────────────────────────┐                                                     │
-  │    ───────────────►       │   Producer (FastAPI)   ├────────┐                                             │
-  │                           └───────────┬────────────┘        │                                             │
-  │                                       │ (Pub/Sub)           │ Writes State                                │
+  │     Client / Gateway      ┌────────────────────────┐                                                     │
+  │    ────────────────►      │   Producer (FastAPI)   ├────────┐                                             │
+  │    (X-Request-ID)         └───────────┬────────────┘        │                                             │
+  │                                       │ (AMQP Pool)         │ Writes State (Redis Pool)                   │
   │                                       ▼                     ▼                                             │
   │                           ┌────────────────────────┐   ┌─────────────┐                                    │
   │                           │   RabbitMQ Broker      │   │ Redis Cache │                                    │
@@ -33,18 +34,17 @@ A production-grade, enterprise-scale microservice platform demonstrating dynamic
   │                                       ▼                     │                                             │
   │                           ┌────────────────────────┐        │                                             │
   │                           │   Worker Pods          ├────────┘                                             │
-  │                           │ (Scale: 0 to 10)       │                                                      │
-  │                           └───────────▲────────────┘                                                      │
-  │                                       │                                                                   │
-  │                                       │ Scales via KEDA ScaledObject                                      │
-  │                                       │                                                                   │
-  │                           ┌───────────┴────────────┐                                                      │
+  │                           │ (Scale: 0 to 10)       ├────────────────────────────────┐                     │
+  │                           └───────────▲────────────┘                                │ Archival            │
+  │                                       │                                             ▼                     │
+  │                                       │ Scales via KEDA ScaledObject      ┌───────────────────┐           │
+  │                                       │                                   │ AWS S3 (Glacier)  │           │
+  │                           ┌───────────┴────────────┐                      └───────────────────┘           │
   │                           │    KEDA Controller     ├──────────────────────────┐                           │
-  │                           └────────────────────────┘                          │                           │
-  │                                                                               │ Scrapes Metrics           │
+  │                           └────────────────────────┘                          │ Scrapes Metrics           │
   │                                                                               ▼                           │
   │     Observability Stack:                                            ┌───────────────────┐                 │
-  │     [ Grafana Dashboards ] ◄────────────────────────────────────────┤    Prometheus     │                 │
+  │     [ Grafana Dashboards ] ◄────────────────────────────────────────┤  Prometheus / OTel│                 │
   │     [ Grafana Loki (Logs) ]                                         └───────────────────┘                 │
   │                                                                                                          │
   └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -54,128 +54,122 @@ A production-grade, enterprise-scale microservice platform demonstrating dynamic
 
 ## 🛠️ Technology Stack & Core Design
 
-| Component | Technology | Practical Purpose |
+| Component | Technology | Production Role |
 |---|---|---|
-| **Infrastructure** | Terraform, AWS VPC, EKS, IAM Roles for Service Accounts (IRSA) | Automates secure, isolated AWS networking and least-privilege service configurations. |
-| **Cost Optimization**| AWS EKS Spot Instances, KEDA | Runs pods on discounted EC2 Spot nodes, and scales consumers completely to `0` when idle. |
-| **Application** | Python 3.12, FastAPI, RabbitMQ, Redis | High-performance asynchronous REST API, persistent task broker, and low-latency status caching. |
-| **GitOps CD** | ArgoCD | Enforces declarative state reconciliation directly from Git. |
-| **Observability** | Prometheus, Grafana, Loki, Alertmanager | Full-stack telemetry monitoring task latency, queue backlogs, pod scale history, and unified logs. |
-| **Reliability** | Pod Disruption Budgets (PDB), NetworkPolicies | Ensures high availability during maintenance and restricts pod networking traffic (least-privilege). |
-| **Chaos Testing** | Bash Automation, Kubernetes API | Emulates runtime disasters (broker offline, pod termination) to validate self-healing and zero task loss. |
+| **Infrastructure** | Terraform, AWS VPC, EKS, IRSA, AWS Budgets | Secure multi-AZ networking, least-privilege IAM, and automated monthly spend guardrails. |
+| **Compute Pools** | AWS Spot Instances, On-Demand System Nodes, KEDA | Scales consumers completely to `0` when idle; isolates critical state on reliable On-Demand nodes. |
+| **Ingestion API** | Python 3.12, FastAPI, Pydantic v2, Uvicorn | High-throughput asynchronous REST API with connection pools, rate limiting, and batch endpoints. |
+| **Broker & State** | RabbitMQ StatefulSet, Redis StatefulSet | Durable message queuing with DLQ, priority queuing (`x-max-priority`), and low-latency state caching. |
+| **GitOps CD** | ArgoCD | Enforces continuous reconciliation directly from version control. |
+| **Observability** | Prometheus, OpenTelemetry Collector, Grafana, Loki | Distributed request tracing, worker deep-dive dashboards, and proactive alerting rules. |
+| **Reliability** | Pod Disruption Budgets (PDB), NetworkPolicies | Guarantees high availability during disruptions and enforces zero-trust container network isolation. |
+| **Testing & Chaos** | Pytest, Async Load Tester, Bash Chaos Script | Comprehensive unit tests, high-concurrency benchmarks, and automated runtime chaos injection. |
 
 ---
 
-## 💡 Key Standout Features
+## 🌐 API Endpoints & Contract Reference
+
+All endpoints include distributed tracing support (`X-Request-ID` header propagation) and request validation.
+
+| Method | Endpoint | Description | Status Code |
+|---|---|---|---|
+| `POST` | `/api/v1/jobs` | Submit a single job with task type, duration, and priority (1-10) | `202 Accepted` |
+| `POST` | `/api/v1/jobs/batch` | Atomically submit up to 100 jobs in a single request (Redis pipeline) | `202 Accepted` |
+| `GET` | `/api/v1/jobs` | List cached jobs with status filtering (`status=COMPLETED`) and pagination | `200 OK` |
+| `GET` | `/api/v1/jobs/{job_id}` | Retrieve comprehensive job status, execution timeline, and results | `200 OK` |
+| `DELETE` | `/api/v1/jobs/{job_id}` | Cancel pending/processing job or remove completed job from cache | `200 OK` |
+| `POST` | `/api/v1/jobs/{job_id}/retry` | Re-queue a failed or cancelled job back into RabbitMQ with reset headers | `202 Accepted` |
+| `GET` | `/healthz` | Kubernetes liveness probe endpoint | `200 OK` |
+| `GET` | `/readyz` | Kubernetes readiness probe (validates RabbitMQ & Redis connectivity) | `200 OK` |
+| `GET` | `/metrics` | Prometheus metrics endpoint | `200 OK` |
+
+Interactive Swagger OpenAPI documentation is available locally at `http://localhost:8080/docs`.
+
+---
+
+## 💡 Key Architectural Highlights
 
 ### 1. Spot Instance Node Group & Scale-to-Zero Workers
-The background `worker` deployment is configured with `replicas: 0`. 
-*   **Scale-to-Zero**: When there are no tasks in RabbitMQ, no worker containers consume CPU or Memory.
-*   **Scale-up**: As soon as tasks are pushed, KEDA detects the backlog and immediately provisions worker pods.
-*   **Spot Billing**: Nodes are configured in Terraform to use AWS Spot Instances (`capacity_type = "SPOT"`), cutting EKS compute costs by up to 90%.
+The background `worker` deployment starts at `replicas: 0`.
+* **Scale-to-Zero**: When the queue is empty, worker replicas scale to `0`, freeing 100% of consumer compute resources.
+* **On-Demand Scaling**: As soon as tasks arrive, KEDA detects queue depth and provisions workers up to 10 replicas.
+* **Spot Diversification**: Worker node pools run on discounted EC2 Spot instances (`t3.medium`, `t3a.medium`, `c5.large`), saving up to 90% compared to on-demand compute.
 
-### 2. IAM Roles for Service Accounts (IRSA)
-Rather than giving the EKS nodes wide AWS permissions, we configure an **OIDC provider** in [eks.tf](terraform/eks.tf). In [irsa.tf](terraform/irsa.tf), we create a specific IAM role with S3/SQS access policies that can only be assumed by the specific K8s ServiceAccount (`worker-sa`) in our namespace.
+### 2. High-Performance Connection Pooling
+* **Redis Connection Pool**: Configured with automatic reconnection, keep-alives, socket timeouts, and health-check intervals.
+* **Thread-Safe AMQP Channel Pool**: Reuses long-lived AMQP channels under a thread lock, eliminating per-request TCP/AMQP handshake latency and ephemeral port exhaustion.
 
-### 3. Graceful Shutdown & Zero Task Loss
-When EKS scales down or EC2 reclaims a Spot instance, pods receive a `SIGTERM` signal. The worker code intercepts this signal:
-*   **Early Abort & Requeue**: If the worker is in the middle of processing a job, it aborts execution immediately, resets the job state in Redis to `PENDING`, rejects the task (`nack` with `requeue=True`) so another worker picks it up immediately, and exits. This ensures that long-running jobs are not lost or stuck in processing when Kubernetes terminates the container.
-*   **Automatic Requeue**: If the worker crashes abruptly, RabbitMQ automatically requeues the task so another worker picks it up—achieving **zero message loss**.
+### 3. Distributed Tracing & Sliding Window Rate Limiting
+* **End-to-End Correlation**: Automatically extracts or generates `X-Request-ID`, propagating it through HTTP responses, AMQP headers, worker execution context, and S3 metadata.
+* **Rate Limiter**: Redis-backed sliding window rate limiter protects the producer from traffic spikes and DDoS, with thread-safe in-memory fallback.
 
-### 4. Exponential Backoff & Jitter
-Worker connections to RabbitMQ implement an exponential backoff retry mechanism with random jitter. This prevents a thundering herd issue during startup spikes or service recovery, gracefully scaling reconnection attempts up to a maximum of 60 seconds.
+### 4. Task Dispatcher Pattern & Execution Timeout Watchdog
+* **Task Registry**: Dynamically routes workloads (`data_processing`, `image_resize`, `report_generation`) to specialized handlers.
+* **Timeout Watchdog**: Terminates tasks that exceed maximum execution deadlines, routing poison pills to the Dead Letter Queue (`tasks_dlq`).
 
-### 5. Dead Letter Queue (DLQ) & Poison Pill Resilience
-To eliminate infinite retry crash loops when corrupt or poisoning messages arrive, the consumer tracks delivery attempts:
-*   **Retry Threshold**: If a task fails, it is retried up to `MAX_RETRIES = 3` with exponential backoff.
-*   **Quarantine in DLQ**: After 3 failed attempts, the message is routed to `tasks_dlq` with failure headers (`x-death-reason`, `x-retry-count`), marked as `FAILED` in Redis, and acknowledged to unblock the main processing queue.
+### 5. Dedicated Worker Telemetry & Health Server
+* A lightweight HTTP server on port 9102 serves `/metrics`, `/healthz`, and `/readyz`, enabling native Kubernetes HTTP liveness and readiness probes on workers.
 
-### 6. S3 Payload Archival & AWS IRSA Integration
-Leveraging IAM Roles for Service Accounts (IRSA):
-*   **Payload Storage**: When `S3_BUCKET` is configured, completed task results are uploaded to `s3://<S3_BUCKET>/results/{job_id}.json`.
-*   **Least Privilege**: The worker assumes the dedicated IAM role defined in [irsa.tf](terraform/irsa.tf) via the EKS OIDC provider without storing permanent AWS credentials.
+### 6. Operational Tooling & DLQ Replay Utility
+* **DLQ Management CLI** (`scripts/replay_dlq.py`): Allows operators to count, inspect, purge, or safely replay dead-lettered messages back to the primary queue.
+* **Async Load Tester** (`tests/load_test.py`): Generates concurrent batch traffic spikes to benchmark API latency and observe KEDA scale-out events.
 
-### 7. Dual-Service Prometheus Telemetry & Grafana Dashboard
-*   **Producer Metrics (Port 8000)**: Ingests HTTP request counts, endpoint latencies (P50, P95), and jobs submitted.
-*   **Worker Metrics (Port 9102)**: Exposes `worker_jobs_processed_total` (by status and task type), `worker_job_duration_seconds`, and `worker_active_jobs`.
-*   **Grafana Dashboard**: Importable JSON dashboard available in [monitoring/dashboards/platform-overview.json](monitoring/dashboards/platform-overview.json).
-*   **Unified Structured Logging**: Both Producer and Worker emit structured JSON logs parsed by Promtail into Loki.
+### 7. FinOps Cost Guardrails & S3 Glacier Lifecycle
+* **AWS Budgets**: Terraform provisions hard monthly cost limits with automated alerts at 80% and 100% thresholds.
+* **S3 Glacier Archival**: Processed job payloads automatically transition to S3 Glacier after 90 days and permanently expire after 365 days.
 
-### 8. Multi-Environment GitOps & Operational Runbook
-*   **Environments**: Declarative Kustomize overlays for [dev](k8s/overlays/dev) and high-availability [prod](k8s/overlays/prod) with pod anti-affinity.
-*   **Runbook**: Detailed troubleshooting, scaling, and incident response procedures are documented in [docs/RUNBOOK.md](docs/RUNBOOK.md).
+---
+
+## 📚 In-Depth Technical Guides
+
+- [System Architecture & Event Flow](docs/ARCHITECTURE.md)
+- [Zero-Trust Security Posture & IRSA](docs/SECURITY.md)
+- [FinOps Cost Optimization Model](docs/COST_OPTIMIZATION.md)
+- [Disaster Recovery & SOPs](docs/DISASTER_RECOVERY.md)
+- [Incident Response Runbook](docs/RUNBOOK.md)
 
 ---
 
 ## 🚀 Getting Started
 
 ### Local Orchestration (Using Docker Compose)
-If you prefer not to spin up a full Kubernetes cluster locally, you can run the entire stack via Docker Compose:
+```bash
+docker compose up --build
+```
+* **Producer API**: [http://localhost:8080/docs](http://localhost:8080/docs)
+* **RabbitMQ Console**: [http://localhost:15672](http://localhost:15672) (`guest` / `guest`)
+* **Worker Telemetry**: [http://localhost:9102/metrics](http://localhost:9102/metrics)
 
-1. **Start the stack**:
-   ```bash
-   docker compose up --build
-   ```
-   This automatically provisions RabbitMQ (with management console), Redis, the FastAPI job producer, and the worker consumer.
+### Running Automated Test Suite & Linter
+```bash
+# Run flake8 and black
+flake8 app/ tests/ scripts/
+black --check app/ tests/ scripts/
 
-2. **Access the services**:
-   - **Producer Swagger API**: [http://localhost:8080/docs](http://localhost:8080/docs)
-   - **RabbitMQ Management Dashboard**: [http://localhost:15672](http://localhost:15672) (User: `guest`, Pass: `guest`)
+# Run unit tests with pytest
+pytest tests/
+```
 
-3. **Teardown**:
-   ```bash
-   docker compose down
-   ```
+### Simulating Traffic Spikes
+```bash
+# Run concurrent load test with 50 jobs
+python tests/load_test.py --url http://localhost:8080 --total 50 --concurrency 10
 
-### Running Unit Tests
-To run the automated Python unit test suite:
+# Run batch submission load test
+python tests/load_test.py --url http://localhost:8080 --total 100 --batch
+```
 
-1. **Install dependencies**:
-   ```bash
-   pip install -r app/producer/requirements.txt -r app/worker/requirements.txt -r tests/requirements.txt
-   ```
+### Managing the Dead Letter Queue
+```bash
+# Check DLQ message count
+python scripts/replay_dlq.py --action count
 
-2. **Run tests**:
-   ```bash
-   pytest
-   ```
+# Peek at the top dead-lettered message
+python scripts/replay_dlq.py --action peek
 
-### Local Kubernetes Emulation (Using `kind`)
-To test KEDA autoscaling and resilience:
-
-1.  **Start a local Kubernetes cluster**:
-    ```bash
-    kind create cluster --name keda-dev
-    ```
-
-2.  **Install KEDA**:
-    ```bash
-    helm repo add kedacore https://kedacore.github.io/charts
-    helm repo update
-    helm install keda kedacore/keda --namespace keda --create-namespace
-    ```
-
-3.  **Build and load local images**:
-    ```bash
-    docker build -t producer:dev ./app/producer
-    docker build -t worker:dev ./app/worker
-    kind load docker-image producer:dev --name keda-dev
-    kind load docker-image worker:dev --name keda-dev
-    ```
-
-4.  **Deploy via Kustomize**:
-    ```bash
-    cd k8s/overlays/dev
-    kustomize edit set image ghcr.io/melvinjosec/cloud-native-processing-platform-producer=producer:dev
-    kustomize edit set image ghcr.io/melvinjosec/cloud-native-processing-platform-worker=worker:dev
-    kubectl apply -k .
-    ```
-
-5.  **Access the API**:
-    ```bash
-    kubectl port-forward svc/producer 8080:80 -n processing-platform
-    ```
-    Access Swagger API docs at `http://localhost:8080/docs`.
+# Replay dead-lettered messages back to the primary queue
+python scripts/replay_dlq.py --action replay --max-messages 50
+```
 
 ---
 
@@ -188,23 +182,12 @@ chmod +x chaos/test-resilience.sh
 ./chaos/test-resilience.sh
 ```
 
-**What the Chaos script does:**
-1.  Floods the broker with 50 jobs.
-2.  Asserts KEDA provisions worker pods up from `0`.
-3.  Terminates a running worker pod in the middle of processing.
-4.  Deletes the active RabbitMQ broker container.
-5.  Waits for node recovery and audits task completion state in Redis.
-6.  Asserts **100% processing success** (zero dropped messages) and verifies workers scale back down to `0`.
-
 ---
 
 ## 📋 Suggested Resume Bullet Points
 
-If you deploy or build upon this project, you can include the following bullet points on your resume:
-
-*   **Designed and implemented** a *Cloud-Native Processing Platform* on AWS EKS using KEDA, scaling backend worker pools from `0` to `10` replicas based on RabbitMQ queue depths.
-*   **Reduced cloud compute overhead** by leveraging EKS Spot Instances and scale-to-zero pod configurations, minimizing idle resource waste.
-*   **Secured EKS pod identity** using IAM Roles for Service Accounts (IRSA) via Terraform, enforcing least-privilege access to AWS S3/SQS.
-*   **Architected resilient caching** and message handling using Redis and RabbitMQ, ensuring zero message loss through worker signal intercepting (`SIGTERM` graceful shutdown).
-*   **Integrated GitOps continuous delivery** workflows using ArgoCD to automate EKS cluster synchronization directly from version control.
-*   **Validated system self-healing** by developing automated chaos scripts that simulated node/broker crashes during load spikes, verifying 100% service recovery.
+* **Architected and deployed** a *Cloud-Native Processing Platform* on AWS EKS with KEDA, scaling worker pools from `0` to `10` replicas based on RabbitMQ queue depths.
+* **Reduced compute infrastructure costs by ~85%** by leveraging AWS Spot Instances, scale-to-zero autoscaling, and S3 Glacier lifecycle tiering.
+* **Implemented resilient event-driven architectures** with connection pooling, Dead Letter Queue (DLQ) retry policies, and `SIGTERM` task drainage (`terminationGracePeriodSeconds: 120`).
+* **Secured Kubernetes microservices** using IAM Roles for Service Accounts (IRSA), PodDisruptionBudgets, and NetworkPolicies with zero-trust isolation.
+* **Engineered operational SRE tooling**, including an async load tester, DLQ replay CLI, and an OpenTelemetry Collector telemetry pipeline with Grafana dashboards.
