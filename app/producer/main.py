@@ -446,6 +446,79 @@ def cancel_job(job_id: str):
         }
 
 
+@app.post("/api/v1/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+def retry_job(job_id: str):
+    if not redis_client:
+        raise HTTPException(
+            status_code=501, detail="Redis caching unavailable. Cannot retry job."
+        )
+
+    try:
+        data = redis_client.get(f"job:{job_id}")
+    except Exception as e:
+        logger.error(f"Redis retrieval error during job retry: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving job for retry")
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job_data = json.loads(data)
+    current_status = job_data.get("status")
+
+    if current_status not in ["FAILED", "CANCELLED"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only FAILED or CANCELLED jobs can be retried. Current status is '{current_status}'.",
+        )
+
+    # Re-queue the job
+    job_data["status"] = "PENDING"
+    job_data["retried_at"] = time.time()
+    job_data.pop("error", None)
+    job_data.pop("failed_at", None)
+    job_data.pop("cancelled_at", None)
+    job_data["retry_count"] = job_data.get("retry_count", 0) + 1
+
+    try:
+        redis_client.set(f"job:{job_id}", json.dumps(job_data), ex=3600)
+    except Exception as e:
+        logger.error(f"Failed to update redis on retry: {e}")
+
+    try:
+        connection, channel = get_rabbitmq_channel()
+        channel.basic_publish(
+            exchange="",
+            routing_key=RABBITMQ_QUEUE,
+            body=json.dumps(job_data),
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                correlation_id=job_id,
+                headers={"x-retry-count": job_data["retry_count"]},
+            ),
+        )
+        if connection != getattr(_rabbitmq_pool, "_connection", None):
+            connection.close()
+        logger.info(
+            f"Successfully re-queued job {job_id} (retry #{job_data['retry_count']})."
+        )
+        JOBS_SUBMITTED.inc()
+    except Exception as e:
+        logger.critical(f"Failed to publish retry job to RabbitMQ: {e}")
+        job_data["status"] = "FAILED"
+        redis_client.set(f"job:{job_id}", json.dumps(job_data), ex=3600)
+        raise HTTPException(
+            status_code=503,
+            detail="Task queue unavailable. Failed to re-queue job.",
+        )
+
+    return {
+        "job_id": job_id,
+        "status": "PENDING",
+        "retry_count": job_data["retry_count"],
+        "message": "Job successfully re-queued for processing",
+    }
+
+
 @app.get("/metrics")
 def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
