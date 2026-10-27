@@ -171,6 +171,12 @@ class JobRequest(BaseModel):
         le=3600,
         description="Execution duration in seconds (1 to 3600)",
     )
+    priority: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Job execution priority between 1 (lowest) and 10 (highest, expedited)",
+    )
     payload: dict = Field(default_factory=dict, description="Task payload parameters")
 
 
@@ -218,6 +224,7 @@ def submit_job(job: JobRequest, request: Request = None):
         "job_id": job_id,
         "task_type": job.task_type,
         "duration_seconds": job.duration_seconds,
+        "priority": job.priority,
         "payload": job.payload,
         "status": "PENDING",
         "created_at": time.time(),
@@ -242,6 +249,7 @@ def submit_job(job: JobRequest, request: Request = None):
             body=json.dumps(job_data),
             properties=pika.BasicProperties(
                 delivery_mode=2,
+                priority=job.priority,
                 correlation_id=job_id,
                 headers={"x-request-id": request_id},
             ),
@@ -280,6 +288,7 @@ def submit_jobs_batch(batch: BatchJobRequest, request: Request = None):
             "job_id": job_id,
             "task_type": item.task_type,
             "duration_seconds": item.duration_seconds,
+            "priority": item.priority,
             "payload": item.payload,
             "status": "PENDING",
             "created_at": time.time(),
@@ -308,6 +317,7 @@ def submit_jobs_batch(batch: BatchJobRequest, request: Request = None):
                 body=json.dumps(job_data),
                 properties=pika.BasicProperties(
                     delivery_mode=2,
+                    priority=job_data.get("priority", 5),
                     correlation_id=job_data["job_id"],
                     headers={"x-request-id": request_id},
                 ),
